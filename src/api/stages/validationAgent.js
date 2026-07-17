@@ -1,6 +1,6 @@
 /**
  * Stage 6: Validation Agent
- * Validates and auto-repairs every field in the RawAISchema from Gemini.
+ * Validates and auto-repairs every field in the schema agent output.
  * Ensures ALL column references actually exist in the dataset before
  * the schema reaches the Analytics Engine.
  *
@@ -16,7 +16,7 @@ const VALID_CHART_TYPES = new Set(['area', 'bar', 'line', 'pie', 'scatter', 'rad
  * @returns {ValidatedSchema}
  */
 export function runValidationAgent(rawSchema, columns) {
-  const columnSet = new Set(columns);
+  let columnSet = new Set(columns);
   const autoCorrections = [];
   const columnIssues = [];
   const kpiIssues = [];
@@ -24,6 +24,36 @@ export function runValidationAgent(rawSchema, columns) {
 
   // Deep-clone to avoid mutating the original AI output
   const schema = JSON.parse(JSON.stringify(rawSchema));
+  const baseColumnSet = new Set(columns);
+
+  if (!Array.isArray(schema.derivedColumns)) {
+    schema.derivedColumns = [];
+  }
+
+  schema.derivedColumns = schema.derivedColumns
+    .filter((derived, i) => {
+      const valid =
+        derived &&
+        typeof derived.name === 'string' &&
+        derived.name.trim() &&
+        derived.formula === 'product' &&
+        Array.isArray(derived.operands) &&
+        derived.operands.length === 2 &&
+        derived.operands.every(col => baseColumnSet.has(col));
+
+      if (!valid) {
+        autoCorrections.push(`derivedColumns[${i}] invalid or references missing columns - removed`);
+      }
+      return valid;
+    })
+    .map(derived => ({
+      name: derived.name.trim(),
+      label: String(derived.label || derived.name).trim(),
+      formula: derived.formula,
+      operands: derived.operands,
+    }));
+
+  columnSet = new Set([...columns, ...schema.derivedColumns.map(col => col.name)]);
 
   // ── 1. Validate columnRoles ─────────────────────────────────────────────
   const knownRoles = [

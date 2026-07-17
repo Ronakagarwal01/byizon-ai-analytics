@@ -1,14 +1,14 @@
 /**
  * Stage 4: Schema Builder
- * Packages the DataProfile into a lean, structured GeminiPayload.
+ * Packages the DataProfile into a lean, structured schema payload.
  * Pure function — zero API calls. Sole purpose: prepare the AI input contract.
  */
 
 /**
  * @param {DataProfile} dataProfile - Output of Stage 3 (Data Profiler)
- * @returns {GeminiPayload}
+ * @returns {object}
  */
-export function buildGeminiPayload(dataProfile) {
+export function buildSchemaPayload(dataProfile) {
   return {
     metadata: {
       fileName: dataProfile.fileName,

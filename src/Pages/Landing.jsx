@@ -1,14 +1,14 @@
 import { Link } from 'react-router-dom';
 import {
-  MessageSquare, BarChart2, FileText, Share2,
-  ArrowRight, Zap, Brain, Globe, CheckCircle2, ChevronRight
+  BarChart2, FileText, Share2,
+  ArrowRight, Zap, Brain, Globe, ChevronRight
 } from 'lucide-react';
 
 const features = [
   { icon: Brain,       title: 'AI Insights',        desc: 'Natural language queries instantly turn into deep business intelligence with contextual recommendations.' },
   { icon: BarChart2,   title: 'Live Dashboards',     desc: 'Auto-generated, real-time dashboards that update as your data evolves — no manual setup required.' },
   { icon: FileText,    title: 'Smart Reports',       desc: 'Executive-quality reports with AI-written summaries, trend analysis, and actionable recommendations.' },
-  { icon: Share2,      title: 'Shareable Links',     desc: 'Share live dashboard URLs with stakeholders — no login required. Branded and always up to date.' },
+  { icon: Share2,      title: 'Protected Sharing',   desc: 'Share encrypted live reports and password-protected PDFs with authorized stakeholders.' },
 ];
 
 const steps = [
@@ -66,9 +66,9 @@ export default function Landing() {
               Try the Demo
             </button>
           </Link>
-          <Link to="/report/shared">
+          <Link to="/dashboard">
             <button className="btn-outline" style={{ fontSize: 15, padding: '13px 28px' }}>
-              View Sample Report <ChevronRight size={15} />
+              Generate Report <ChevronRight size={15} />
             </button>
           </Link>
         </div>
@@ -161,9 +161,9 @@ export default function Landing() {
               <Zap size={17} /> Start Free Demo
             </button>
           </Link>
-          <Link to="/report/shared">
+          <Link to="/dashboard">
             <button className="btn-outline" style={{ fontSize: 15, padding: '13px 28px' }}>
-              <Globe size={16} /> View Live Report
+              <Globe size={16} /> Upload Data
             </button>
           </Link>
         </div>

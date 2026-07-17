@@ -27,3 +27,16 @@ dist-ssr
 .env
 .env.local
 .env.*.local
+backend/data/connections.sqlite3
+backend/data/connector_encryption.key
+backend/data/*.bin
+backend/data/*.key
+backend/data/*.db
+backend/data/*.sqlite3
+backend/**/__pycache__/
+*.pyc
+
+# Local/generated workspace artifacts
+tmp/
+output/
+*-Ronak_HP*

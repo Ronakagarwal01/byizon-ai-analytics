@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+﻿import { useState, useRef, useCallback } from 'react';
 import { runPipeline, PIPELINE_STAGES } from '../api/pipeline';
 import { useData } from '../context/DataContext';
 import {
@@ -17,6 +17,7 @@ const STAGE_ICONS = {
   CheckCircle2: CheckCircle2,
   Zap: Zap,
 };
+const CURRENT_ANALYSIS_VERSION = '2026-07-15-source-isolation-v8';
 
 // Status indicator component for each pipeline stage
 function StageRow({ stage, status, message }) {
@@ -48,17 +49,18 @@ export default function ExcelUploader({ onAnalysisComplete }) {
   const [status, setStatus] = useState('idle'); // idle | running | done | error
   const [errorMsg, setErrorMsg] = useState('');
   const [dragging, setDragging] = useState(false);
-  const [recentFiles, setRecentFiles] = useState([]);
-  const [pipelineState, setPipelineState] = useState({}); // { stageId: { status, message } }
-  const inputRef = useRef();
-
-  // Load recent files from localStorage on mount
-  useEffect(() => {
+  const [recentFiles, setRecentFiles] = useState(() => {
     try {
       const stored = localStorage.getItem('dsi_recent_files');
-      if (stored) setRecentFiles(JSON.parse(stored));
-    } catch { /* silent */ }
-  }, []);
+      return stored
+        ? JSON.parse(stored).filter(item => item?.data?.analysisVersion === CURRENT_ANALYSIS_VERSION)
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const [pipelineState, setPipelineState] = useState({}); // { stageId: { status, message } }
+  const inputRef = useRef();
 
   const saveToRecentFiles = (fileName, rowCount, datasetType, fullData) => {
     try {
@@ -79,14 +81,15 @@ export default function ExcelUploader({ onAnalysisComplete }) {
   };
 
   const loadRecentFile = (item) => {
-    setStatus('done');
-    setFile({ name: item.name });
-    setParsed({ columns: item.data.columns, rows: item.data.rows });
-    setUploadedData(item.data);
-    onAnalysisComplete?.(item.data);
+    setStatus('error');
+    setErrorMsg(`${item.name} is analysis history only. Select the original file again so every row is freshly parsed and verified.`);
+    inputRef.current?.click();
   };
 
   const runFile = useCallback(async (f) => {
+    // Accuracy rule: the previous dataset must disappear before a new file starts.
+    // This prevents failed, slow, or overlapping uploads from leaving stale results visible.
+    setUploadedData(null);
     setFile(f);
     setStatus('running');
     setErrorMsg('');
@@ -103,6 +106,13 @@ export default function ExcelUploader({ onAnalysisComplete }) {
 
       const fullData = { ...result };
 
+      if (fullData.fileName !== f.name) {
+        throw new Error(`Source verification failed: selected ${f.name}, but analysis returned ${fullData.fileName}.`);
+      }
+      if (!fullData.sourceProvenance?.sha256) {
+        throw new Error('Source verification failed: the backend did not return a file fingerprint.');
+      }
+
       setParsed({ columns: result.columns, rows: result.rows });
       setUploadedData(fullData);
       saveToRecentFiles(result.fileName, result.rowCount, result.datasetType, fullData);
@@ -112,7 +122,7 @@ export default function ExcelUploader({ onAnalysisComplete }) {
       setErrorMsg(err.message || 'An unexpected error occurred during analysis.');
       setStatus('error');
     }
-  }, [onAnalysisComplete]);
+  }, [onAnalysisComplete, setUploadedData]);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -153,16 +163,16 @@ export default function ExcelUploader({ onAnalysisComplete }) {
             <input
               ref={inputRef}
               type="file"
-              accept=".csv,.xlsx,.xls"
+              accept=".csv,.tsv,.xlsx,.xls,.json,.pdf,.txt,.log,.sql,.sqlite,.sqlite3,.db"
               style={{ display: 'none' }}
               onChange={handleFileInput}
             />
             <Upload size={32} color={dragging ? 'var(--blue-400)' : 'var(--text-muted)'} />
             <div className="upload-zone-title">
-              {dragging ? 'Drop your file here' : 'Upload CSV or Excel File'}
+              {dragging ? 'Drop your file here' : 'Upload Any Data File'}
             </div>
             <div className="upload-zone-sub">
-              Drag & drop or click to browse · Supports CSV, XLSX, XLS up to 100 MB
+              Drag & drop or click to browse - Supports Excel, CSV, JSON, PDF, TXT, SQL, SQLite up to 100 MB
             </div>
           </div>
 
@@ -230,7 +240,7 @@ export default function ExcelUploader({ onAnalysisComplete }) {
           </div>
           <div className="pipeline-panel-footer">
             <Loader2 size={14} className="pipeline-spinner-sm" />
-            Gemini AI is analyzing your dataset...
+            Local analytics engine is analyzing your dataset...
           </div>
         </div>
       )}
@@ -307,3 +317,4 @@ export default function ExcelUploader({ onAnalysisComplete }) {
     </div>
   );
 }
+

@@ -4,7 +4,7 @@
  * Checks: extension, MIME type, file size, empty file guard.
  */
 
-const ALLOWED_EXTENSIONS = ['.csv', '.xlsx', '.xls'];
+const ALLOWED_EXTENSIONS = ['.csv', '.tsv', '.xlsx', '.xls', '.json', '.pdf', '.txt', '.log', '.sql', '.sqlite', '.sqlite3', '.db'];
 const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 
 /**
@@ -31,7 +31,7 @@ export function validateFile(file) {
   const ext = ALLOWED_EXTENSIONS.find(e => name.endsWith(e));
   if (!ext) {
     const foundExt = name.includes('.') ? name.split('.').pop() : 'unknown';
-    result.error = `Unsupported file format ".${foundExt}". Please upload a CSV (.csv) or Excel (.xlsx, .xls) file.`;
+    result.error = `Unsupported file format ".${foundExt}". Please upload CSV, Excel, JSON, PDF, TXT, SQL, or SQLite database export files.`;
     return result;
   }
   result.extension = ext;

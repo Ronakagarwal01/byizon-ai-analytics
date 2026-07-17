@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Master Pipeline Orchestrator
  * Coordinates all 7 stages of the DSI Enterprise Data Intelligence Pipeline.
  *
@@ -15,19 +15,20 @@
 import { validateFile } from './stages/fileValidator';
 import { parseFile } from './stages/fileParser';
 import { buildDataProfile } from './stages/dataProfiler';
-import { buildGeminiPayload } from './stages/schemaBuilder';
+import { buildSchemaPayload } from './stages/schemaBuilder';
 import { runAISchemaAgent } from './stages/aiSchemaAgent';
 import { runValidationAgent } from './stages/validationAgent';
 import { runAnalyticsEngine } from './analyticsEngine';
+import { analyzeFileWithBackend, isLegacyBrowserFile, isUniversalBackendFile } from './universalBackend';
 
 export const PIPELINE_STAGES = [
-  { id: 'validator',  label: 'File Validator',  icon: 'Shield' },
-  { id: 'parser',     label: 'File Parser',      icon: 'FileSpreadsheet' },
-  { id: 'profiler',   label: 'Data Profiler',    icon: 'BarChart2' },
-  { id: 'schema',     label: 'Schema Builder',   icon: 'Layers' },
-  { id: 'ai_agent',   label: 'AI Schema Agent',  icon: 'Sparkles' },
-  { id: 'validation', label: 'Validation Agent', icon: 'CheckCircle2' },
-  { id: 'analytics',  label: 'Analytics Engine', icon: 'Zap' },
+  { id: 'validator',  label: 'Uploading file',              icon: 'Shield' },
+  { id: 'parser',     label: 'Reading data',                 icon: 'FileSpreadsheet' },
+  { id: 'profiler',   label: 'Checking data quality',        icon: 'BarChart2' },
+  { id: 'schema',     label: 'Detecting schema',             icon: 'Layers' },
+  { id: 'ai_agent',   label: 'Discovering patterns',         icon: 'Sparkles' },
+  { id: 'validation', label: 'Running statistical analysis', icon: 'CheckCircle2' },
+  { id: 'analytics',  label: 'Preparing report',             icon: 'Zap' },
 ];
 
 /**
@@ -41,6 +42,43 @@ export const PIPELINE_STAGES = [
  */
 export async function runPipeline(file, onStageUpdate) {
   const tick = (stageId, status, msg) => onStageUpdate?.(stageId, status, msg);
+
+  if (isUniversalBackendFile(file.name)) {
+    tick('validator', 'running', `Validating "${file.name}"...`);
+    if (file.size === 0) {
+      tick('validator', 'error', 'The uploaded file is empty.');
+      throw new Error('The uploaded file is empty.');
+    }
+    if (file.size > 100 * 1024 * 1024) {
+      tick('validator', 'error', 'File exceeds the 100 MB limit.');
+      throw new Error('File exceeds the 100 MB limit.');
+    }
+    tick('validator', 'done', `${(file.size / (1024 * 1024)).toFixed(2)} MB`);
+
+    tick('parser', 'running', 'Sending file to Python/Pandas universal parser...');
+    tick('profiler', 'running', 'Waiting for backend profiling and data-quality audit...');
+    tick('schema', 'running', 'Inferring domain, schema, roles, and relationships...');
+    tick('ai_agent', 'running', 'Generating deterministic business insights...');
+    tick('validation', 'running', 'Checking formulas and source-column mappings...');
+    tick('analytics', 'running', 'Computing KPIs, charts, hidden patterns, and report...');
+
+    try {
+      const result = await analyzeFileWithBackend(file);
+      tick('parser', 'done', `${result.rowCount.toLocaleString()} primary rows parsed from ${result.tables?.length || 1} table(s)`);
+      tick('profiler', 'done', `Quality ${result.dataQuality?.quality ?? 'N/A'}/100 - completeness ${result.dataQuality?.completeness ?? 'N/A'}%`);
+      tick('schema', 'done', `${result.businessDomain || 'Generic'} - ${Math.round((result.detectionConfidence || 0) * 100)}% confidence`);
+      tick('ai_agent', 'done', `${result.insights?.length || 0} grounded insights generated`);
+      tick('validation', 'done', 'All displayed metrics include formulas/source columns');
+      tick('analytics', 'done', `${result.kpis?.length || 0} KPIs - ${result.charts?.length || 0} charts - ${result.anomalies?.length || 0} anomalies`);
+      return result;
+    } catch (err) {
+      if (!isLegacyBrowserFile(file.name)) {
+        tick('analytics', 'error', err.message);
+        throw new Error(`${err.message} Start the Python backend with: npm run backend`, { cause: err });
+      }
+      tick('parser', 'running', `Python backend unavailable (${err.message}). Falling back to browser parser...`);
+    }
+  }
 
   // ── Stage 1: File Validator ─────────────────────────────────────────────
   tick('validator', 'running', `Validating "${file.name}"...`);
@@ -78,10 +116,10 @@ export async function runPipeline(file, onStageUpdate) {
   tick('profiler', 'done', `${numCount} numeric · ${catCount} categorical · ${dateCount} date`);
 
   // ── Stage 4: Schema Builder ─────────────────────────────────────────────
-  tick('schema', 'running', 'Packaging metadata payload for AI...');
-  let geminiPayload;
+  tick('schema', 'running', 'Packaging metadata payload for schema detection...');
+  let schemaPayload;
   try {
-    geminiPayload = buildGeminiPayload(dataProfile);
+    schemaPayload = buildSchemaPayload(dataProfile);
   } catch (err) {
     tick('schema', 'error', err.message);
     throw err;
@@ -89,10 +127,10 @@ export async function runPipeline(file, onStageUpdate) {
   tick('schema', 'done', `${dataProfile.rowCount.toLocaleString()} rows + ${dataProfile.colCount} column profiles packaged`);
 
   // ── Stage 5: AI Schema Agent ────────────────────────────────────────────
-  tick('ai_agent', 'running', 'Sending to Gemini AI for schema analysis...');
+  tick('ai_agent', 'running', 'Detecting schema locally; Hugging Face enrichment optional...');
   let rawSchema;
   try {
-    rawSchema = await runAISchemaAgent(geminiPayload, msg => tick('ai_agent', 'running', msg));
+    rawSchema = await runAISchemaAgent(schemaPayload, msg => tick('ai_agent', 'running', msg));
   } catch (err) {
     tick('ai_agent', 'error', err.message);
     throw err;
@@ -133,3 +171,4 @@ export async function runPipeline(file, onStageUpdate) {
 
   return result;
 }
+

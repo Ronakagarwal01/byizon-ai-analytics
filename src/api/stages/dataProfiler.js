@@ -28,8 +28,7 @@ function detectColumnType(values) {
     }
 
     // Numeric: plain number or number with currency symbols
-    const stripped = s.replace(/[₹$€£,\s%]/g, '');
-    if (stripped !== '' && !isNaN(Number(stripped)) && isFinite(Number(stripped))) {
+    if (!Number.isNaN(parseNumericValue(val))) {
       numericCount++;
       continue;
     }
@@ -56,9 +55,27 @@ function detectColumnType(values) {
 
 function parseNumericValue(val) {
   if (val === null || val === undefined || val === '') return NaN;
-  if (typeof val === 'number') return val;
-  const stripped = String(val).replace(/[₹$€£,\s%]/g, '');
-  return parseFloat(stripped);
+  if (typeof val === 'number') return Number.isFinite(val) ? val : NaN;
+
+  let s = String(val).trim();
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) {
+    negative = true;
+    s = s.slice(1, -1);
+  }
+  s = s.replace(/[₹$€£\s%]/g, '');
+  if (s.includes(',') && !s.includes('.')) {
+    const parts = s.split(',');
+    const last = parts[parts.length - 1];
+    s = last.length > 0 && last.length <= 2
+      ? `${parts.slice(0, -1).join('')}.${last}`
+      : parts.join('');
+  } else {
+    s = s.replace(/,/g, '');
+  }
+  if (!/^[+-]?\d*(\.\d+)?$/.test(s) || !s || s === '.') return NaN;
+  const parsed = Number(s);
+  return Number.isFinite(parsed) ? (negative ? -parsed : parsed) : NaN;
 }
 
 function profileNumericColumn(values) {
@@ -100,7 +117,17 @@ function profileDateColumn(values) {
   const dates = values
     .map(v => {
       if (v instanceof Date) return v;
-      const d = new Date(v);
+      const s = String(v).trim();
+      const parts = s.split(/[-/]/);
+      if (parts.length === 3 && String(parts[2]).length === 4) {
+        const [p0, p1, p2] = parts.map(p => parseInt(p, 10));
+        if (![p0, p1, p2].some(Number.isNaN)) {
+          const dayFirst = p0 > 12 || p1 <= 12;
+          const d2 = new Date(p2, (dayFirst ? p1 : p0) - 1, dayFirst ? p0 : p1);
+          if (!isNaN(d2.getTime())) return d2;
+        }
+      }
+      const d = new Date(s);
       return isNaN(d.getTime()) ? null : d;
     })
     .filter(Boolean);

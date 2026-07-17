@@ -4,7 +4,7 @@
  * This file now contains ONLY deterministic, side-effect-free math utilities
  * used by the Analytics Engine (analyticsEngine.js).
  *
- * REMOVED (replaced by Gemini AI pipeline):
+ * REMOVED (replaced by schema-driven analytics pipeline):
  *   - DATASET_CLASSIFICATION_KEYWORDS
  *   - MAPPING_SYNONYMS
  *   - detectDatasetType()

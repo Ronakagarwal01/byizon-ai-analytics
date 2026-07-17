@@ -3,17 +3,47 @@
  * Pure computation layer. Takes ValidatedSchema + full dataset rows,
  * computes all KPIs, chart series, anomalies, and data quality metrics.
  *
- * No AI calls. No heuristics. All driven by ValidatedSchema from Gemini.
+ * No AI calls. Computations are driven by a validated deterministic schema.
  */
 
 // ── Numeric & Date Utilities ──────────────────────────────────────────────────
 
 export function parseNumeric(val) {
-  if (val === null || val === undefined || val === '') return 0;
-  if (typeof val === 'number') return isFinite(val) ? val : 0;
-  const stripped = String(val).replace(/[₹$€£,\s%]/g, '');
-  const n = parseFloat(stripped);
-  return isNaN(n) ? 0 : n;
+  return parseNumericStrict(val) ?? 0;
+}
+
+export function parseNumericStrict(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'number') return Number.isFinite(val) ? val : null;
+
+  let s = String(val).trim();
+  if (!s) return null;
+
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) {
+    negative = true;
+    s = s.slice(1, -1);
+  }
+
+  s = s.replace(/[₹$€£\s%]/g, '');
+
+  if (s.includes(',') && !s.includes('.')) {
+    const parts = s.split(',');
+    const last = parts[parts.length - 1];
+    s = last.length > 0 && last.length <= 2
+      ? `${parts.slice(0, -1).join('')}.${last}`
+      : parts.join('');
+  } else {
+    s = s.replace(/,/g, '');
+  }
+
+  if (!/^[+-]?\d*(\.\d+)?$/.test(s) || s === '' || s === '.' || s === '-' || s === '+') {
+    return null;
+  }
+
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return negative ? -n : n;
 }
 
 export function parseDate(val) {
@@ -22,23 +52,32 @@ export function parseDate(val) {
   // Excel serial number
   const num = Number(val);
   if (!isNaN(num) && num > 25569 && num < 100000) {
-    return new Date((num - 25569) * 86400 * 1000);
+    return new Date(Date.UTC(1899, 11, 30) + num * 86400 * 1000);
   }
-  const d = new Date(val);
-  if (!isNaN(d.getTime())) return d;
+
+  const s = String(val).trim();
+
+  const iso = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (iso) {
+    const d = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+
   // DD/MM/YYYY and DD-MM-YYYY
-  const parts = String(val).split(/[-/]/);
+  const parts = s.split(/[-/]/);
   if (parts.length === 3) {
     const [p0, p1, p2] = parts.map(p => parseInt(p, 10));
-    if (String(parts[2]).length === 4) {
-      const d2 = new Date(p2, p1 - 1, p0);
-      if (!isNaN(d2.getTime())) return d2;
-    }
-    if (String(parts[0]).length === 4) {
-      const d2 = new Date(p0, p1 - 1, p2);
+    if (String(parts[2]).length === 4 && ![p0, p1, p2].some(Number.isNaN)) {
+      const dayFirst = p0 > 12 || p1 <= 12;
+      const day = dayFirst ? p0 : p1;
+      const month = dayFirst ? p1 : p0;
+      const d2 = new Date(p2, month - 1, day);
       if (!isNaN(d2.getTime())) return d2;
     }
   }
+
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) return d;
   return null;
 }
 
@@ -47,26 +86,32 @@ export function parseDate(val) {
 /**
  * Format value using proper Indian locale numbering (e.g. ₹1,26,717.03) or standard currency formatting.
  */
-export function formatLocaleCurrency(val, symbol = '₹') {
+export function formatLocaleCurrency(val, symbol = '₹', currencyCode = 'INR') {
   if (typeof val !== 'number') return String(val);
-  
-  // Format to Indian system if rupee symbol is used
-  const formatter = new Intl.NumberFormat('en-IN', {
+
+  const currencyBySymbol = {
+    '₹': { code: 'INR', locale: 'en-IN' },
+    '$': { code: 'USD', locale: 'en-US' },
+    '€': { code: 'EUR', locale: 'de-DE' },
+    '£': { code: 'GBP', locale: 'en-GB' },
+  };
+  const selected = currencyBySymbol[symbol] || { code: currencyCode || 'USD', locale: 'en-US' };
+
+  const formatter = new Intl.NumberFormat(selected.locale, {
     style: 'currency',
-    currency: 'INR',
+    currency: selected.code,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
-  let formatted = formatter.format(val);
-  
-  // Swap the symbol if it's different from ₹
-  if (symbol !== '₹') {
-    formatted = formatted.replace('₹', symbol);
+
+  try {
+    return formatter.format(val);
+  } catch {
+    return `${symbol}${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
-  return formatted;
 }
 
-function formatKPIValue(rawValue, kpi, currencySymbol = '₹') {
+function formatKPIValue(rawValue, kpi, currencySymbol = '₹', currencyCode = 'INR') {
   if (typeof rawValue !== 'number') return String(rawValue);
 
   const label = (kpi.label || '').toLowerCase();
@@ -81,7 +126,7 @@ function formatKPIValue(rawValue, kpi, currencySymbol = '₹') {
                      kpi.prefix === '$';
 
   if (isCurrency) {
-    return formatLocaleCurrency(rawValue, currencySymbol);
+    return formatLocaleCurrency(rawValue, currencySymbol, currencyCode);
   }
 
   if (label.includes('rate') || label.includes('margin') || kpi.suffix === '%') {
@@ -103,8 +148,8 @@ function getPeriodGrowth(kpi, rows, dateCol) {
 
   // Parse and sort rows by date ascending
   const datedRows = rows
-    .map(r => ({ val: parseNumeric(r[kpi.column]), date: parseDate(r[dateCol]) }))
-    .filter(x => x.date !== null)
+    .map(r => ({ val: parseNumericStrict(r[kpi.column]), date: parseDate(r[dateCol]) }))
+    .filter(x => x.date !== null && x.val !== null)
     .sort((a, b) => a.date - b.date);
 
   if (datedRows.length < 4) {
@@ -141,23 +186,27 @@ function computeKPIValue(kpi, rows) {
     return rows.length;
   }
 
-  const values = rows
-    .map(r => r[column])
-    .filter(v => v !== null && v !== undefined && v !== '');
+  const values = rows.map(r => r[column]).filter(v => v !== null && v !== undefined && v !== '');
 
   if (values.length === 0) return 0;
 
   switch (aggregation) {
-    case 'sum':
-      return values.reduce((a, v) => a + parseNumeric(v), 0);
-    case 'avg': {
-      const nums = values.map(parseNumeric);
-      return nums.reduce((a, b) => a + b, 0) / nums.length;
+    case 'sum': {
+      const nums = values.map(parseNumericStrict).filter(n => n !== null);
+      return nums.reduce((a, v) => a + v, 0);
     }
-    case 'max':
-      return Math.max(...values.map(parseNumeric));
-    case 'min':
-      return Math.min(...values.map(parseNumeric));
+    case 'avg': {
+      const nums = values.map(parseNumericStrict).filter(n => n !== null);
+      return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+    }
+    case 'max': {
+      const nums = values.map(parseNumericStrict).filter(n => n !== null);
+      return nums.length ? Math.max(...nums) : 0;
+    }
+    case 'min': {
+      const nums = values.map(parseNumericStrict).filter(n => n !== null);
+      return nums.length ? Math.min(...nums) : 0;
+    }
     case 'count_distinct':
       return new Set(values.map(v => String(v).trim())).size;
     default:
@@ -167,7 +216,7 @@ function computeKPIValue(kpi, rows) {
 
 // ── Confidence Score Engine ─────────────────────────────────────────────────
 
-function calculateConfidence(validatedSchema, columns) {
+function calculateConfidence(validatedSchema) {
   // Column Mapping Score (fraction of key roles mapped)
   const keyRoles = ['date', 'metric', 'category', 'product'];
   const mappedCount = keyRoles.filter(role => validatedSchema.columnRoles?.[role]).length;
@@ -251,6 +300,16 @@ function generateExecutiveSummary(kpis, dataQuality, anomalies, datasetType, bus
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+function formatMonthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatMonthLabel(monthKey, includeYear = true) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const label = MONTH_NAMES[(month || 1) - 1] || monthKey;
+  return includeYear ? `${label} ${year}` : label;
+}
+
 function buildTimeSeriesData(chart, rows) {
   const { xAxis, yAxis, groupBy } = chart;
   if (!xAxis) return [];
@@ -265,16 +324,20 @@ function buildTimeSeriesData(chart, rows) {
     } else if (groupBy === 'quarter') {
       key = `${d.getFullYear()}-Q${Math.ceil((d.getMonth() + 1) / 3)}`;
     } else {
-      key = MONTH_NAMES[d.getMonth()];
+      key = formatMonthKey(d);
     }
-    const val = yAxis ? parseNumeric(r[yAxis]) : 1;
+    const parsed = yAxis ? parseNumericStrict(r[yAxis]) : 1;
+    if (parsed === null) return;
+    const val = parsed;
     trendMap[key] = (trendMap[key] || 0) + val;
   });
 
   if (groupBy === 'month' || !groupBy) {
-    return MONTH_NAMES
-      .filter(m => trendMap[m] !== undefined)
-      .map(m => ({ name: m, value: Math.round(trendMap[m]) }));
+    const years = new Set(Object.keys(trendMap).map(key => key.slice(0, 4)));
+    const includeYear = years.size > 1;
+    return Object.entries(trendMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, value]) => ({ name: formatMonthLabel(name, includeYear), value: Math.round(value) }));
   }
   return Object.entries(trendMap)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -290,7 +353,9 @@ function buildCategoryData(chart, rows) {
   const counts = {};
   rows.forEach(r => {
     const cat = String(r[dimCol] ?? 'N/A').trim();
-    const val = metricCol ? parseNumeric(r[metricCol]) : 1;
+    const parsed = metricCol ? parseNumericStrict(r[metricCol]) : 1;
+    if (parsed === null) return;
+    const val = parsed;
     counts[cat] = (counts[cat] || 0) + val;
   });
 
@@ -309,8 +374,8 @@ function buildChartSeries(chart, rows) {
     if (!xAxis || !yAxis) return [];
     return rows
       .slice(0, 200)
-      .map(r => ({ x: parseNumeric(r[xAxis]), y: parseNumeric(r[yAxis]) }))
-      .filter(p => !isNaN(p.x) && !isNaN(p.y));
+      .map(r => ({ x: parseNumericStrict(r[xAxis]), y: parseNumericStrict(r[yAxis]) }))
+      .filter(p => p.x !== null && p.y !== null);
   }
   return buildCategoryData(chart, rows);
 }
@@ -326,7 +391,8 @@ function detectAnomalies(anomalyRules, rows, columns) {
 
     if (type === 'negative_metric') {
       rows.forEach((r, idx) => {
-        const val = parseNumeric(r[column]);
+        const val = parseNumericStrict(r[column]);
+        if (val === null) return;
         if (val < 0) {
           anomalies.push({
             id: `neg-${column}-${idx}`,
@@ -339,23 +405,30 @@ function detectAnomalies(anomalyRules, rows, columns) {
     }
 
     if (type === 'zscore_outlier') {
-      const nums = rows.map(r => parseNumeric(r[column])).filter(n => n !== 0);
+      const nums = rows.map(r => parseNumericStrict(r[column])).filter(n => n !== null);
       if (nums.length < 10) return;
       const mean = nums.reduce((a, b) => a + b, 0) / nums.length;
       const stdev = Math.sqrt(nums.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / nums.length);
       const z = threshold || 3;
       if (stdev === 0) return;
-      rows.forEach((r, idx) => {
-        const val = parseNumeric(r[column]);
-        if (Math.abs((val - mean) / stdev) > z) {
+      rows
+        .map((r, idx) => {
+          const val = parseNumericStrict(r[column]);
+          if (val === null) return null;
+          const score = Math.abs((val - mean) / stdev);
+          return score > z ? { idx, val, score } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10)
+        .forEach(({ idx, val, score }) => {
           anomalies.push({
             id: `outlier-${column}-${idx}`,
             type: 'Statistical Outlier',
-            description: `Row ${idx + 1}: "${column}" = ${val.toLocaleString()} is a ${z}σ outlier.`,
-            severity: 'Warning',
+            description: `Row ${idx + 1}: "${column}" = ${val.toLocaleString('en-IN')} is a ${score.toFixed(1)}σ outlier.`,
+            severity: 'Info',
           });
-        }
-      });
+        });
     }
 
     if (type === 'null_check') {
@@ -409,7 +482,9 @@ function scoreDataQuality(columns, rows, anomalies) {
   const totalCells = rows.length * columns.length;
   const completeness = parseFloat(((totalCells - emptyCount) / totalCells * 100).toFixed(1));
   const missingPenalty = Math.min(25, (emptyCount / totalCells) * 100);
-  const anomalyPenalty = Math.min(25, anomalies.length * 2);
+  const criticalCount = anomalies.filter(a => a.severity === 'Critical').length;
+  const warningCount = anomalies.filter(a => a.severity === 'Warning').length;
+  const anomalyPenalty = Math.min(10, criticalCount * 3 + warningCount);
   const quality = parseFloat(Math.max(0, Math.min(100, 100 - missingPenalty - anomalyPenalty)).toFixed(1));
 
   return {
@@ -453,13 +528,195 @@ function buildTrendData(rows, dateCol, metricCol) {
   rows.forEach(r => {
     const d = parseDate(r[dateCol]);
     if (!d) return;
-    const m = MONTH_NAMES[d.getMonth()];
-    const val = metricCol ? parseNumeric(r[metricCol]) : 1;
-    trendMap[m] = (trendMap[m] || 0) + val;
+    const m = formatMonthKey(d);
+    const parsed = metricCol ? parseNumericStrict(r[metricCol]) : 1;
+    if (parsed === null) return;
+    trendMap[m] = (trendMap[m] || 0) + parsed;
   });
-  return MONTH_NAMES
-    .filter(m => trendMap[m] !== undefined)
-    .map(m => ({ month: m, revenue: Math.round(trendMap[m]) }));
+  const years = new Set(Object.keys(trendMap).map(key => key.slice(0, 4)));
+  const includeYear = years.size > 1;
+  return Object.entries(trendMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, revenue]) => ({ month: formatMonthLabel(month, includeYear), revenue: Math.round(revenue) }));
+}
+
+function applyDerivedColumns(columns, rows, derivedColumns = []) {
+  const validDerived = (derivedColumns || []).filter(derived =>
+    derived &&
+    derived.formula === 'product' &&
+    Array.isArray(derived.operands) &&
+    derived.operands.length === 2 &&
+    derived.operands.every(col => columns.includes(col))
+  );
+
+  if (!validDerived.length) {
+    return { columns, rows };
+  }
+
+  const nextColumns = [...columns];
+  validDerived.forEach(derived => {
+    if (!nextColumns.includes(derived.name)) nextColumns.push(derived.name);
+  });
+
+  rows.forEach(row => {
+    validDerived.forEach(derived => {
+      const [leftCol, rightCol] = derived.operands;
+      const left = parseNumericStrict(row[leftCol]);
+      const right = parseNumericStrict(row[rightCol]);
+      row[derived.name] = left === null || right === null ? '' : left * right;
+    });
+  });
+
+  return { columns: nextColumns, rows };
+}
+
+function findColumn(columns, patterns, fallback = null) {
+  for (const pattern of patterns) {
+    const found = columns.find(col => pattern.test(col));
+    if (found) return found;
+  }
+  return fallback;
+}
+
+function formatCompactINR(value) {
+  const n = Number(value) || 0;
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs >= 10000000) return `${sign}₹${(abs / 10000000).toFixed(2)} crore`;
+  if (abs >= 100000) return `${sign}₹${(abs / 100000).toFixed(abs >= 1000000 ? 2 : 1)} lakh`;
+  return `${sign}₹${abs.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+function sumColumn(rows, column) {
+  if (!column) return 0;
+  return rows.reduce((sum, row) => sum + parseNumeric(row[column]), 0);
+}
+
+function averageColumn(rows, column) {
+  if (!column) return null;
+  const values = rows.map(row => parseNumericStrict(row[column])).filter(value => value !== null);
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function groupBySum(rows, dimensionColumn, metricColumn, limit = 10) {
+  if (!dimensionColumn || !metricColumn) return [];
+  const grouped = new Map();
+  rows.forEach(row => {
+    const name = String(row[dimensionColumn] || 'Unknown').trim() || 'Unknown';
+    grouped.set(name, (grouped.get(name) || 0) + parseNumeric(row[metricColumn]));
+  });
+  return [...grouped.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([name, rawValue], index) => ({
+      name,
+      rawValue,
+      value: formatCompactINR(rawValue),
+      rank: index + 1,
+    }));
+}
+
+function groupSalesProfit(rows, dimensionColumn, salesColumn, profitColumn, limit = 10) {
+  if (!dimensionColumn || !salesColumn) return [];
+  const grouped = new Map();
+
+  rows.forEach(row => {
+    const name = String(row[dimensionColumn] || 'Unknown').trim() || 'Unknown';
+    const current = grouped.get(name) || { salesRaw: 0, profitRaw: 0 };
+    current.salesRaw += parseNumeric(row[salesColumn]);
+    if (profitColumn) current.profitRaw += parseNumeric(row[profitColumn]);
+    grouped.set(name, current);
+  });
+
+  return [...grouped.entries()]
+    .sort((a, b) => b[1].salesRaw - a[1].salesRaw)
+    .slice(0, limit)
+    .map(([name, values], index) => {
+      const margin = values.salesRaw ? (values.profitRaw / values.salesRaw) * 100 : null;
+      return {
+        name,
+        salesRaw: values.salesRaw,
+        profitRaw: values.profitRaw,
+        margin,
+        sales: formatCompactINR(values.salesRaw),
+        profit: profitColumn ? formatCompactINR(values.profitRaw) : 'N/A',
+        marginFormatted: margin === null || !profitColumn ? 'N/A' : `${margin.toFixed(1)}%`,
+        rank: index + 1,
+      };
+    });
+}
+
+function groupByCount(rows, dimensionColumn, limit = 10) {
+  if (!dimensionColumn) return [];
+  const grouped = new Map();
+  rows.forEach(row => {
+    const name = String(row[dimensionColumn] || 'Unknown').trim() || 'Unknown';
+    grouped.set(name, (grouped.get(name) || 0) + 1);
+  });
+  return [...grouped.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([name, count], index) => ({ name, count, rank: index + 1 }));
+}
+
+function buildBusinessSummary(columns, rows, columnRoles = {}) {
+  const netSalesCol = findColumn(columns, [/^net\s*sales/i, /net\s*revenue/i, /net\s*amount/i], null);
+  const grossSalesCol = findColumn(columns, [/^gross\s*sales/i, /gross\s*revenue/i], null);
+  const salesCol = netSalesCol || columnRoles.metric || grossSalesCol;
+  const profitCol = columnRoles.profit || findColumn(columns, [/^profit/i, /net\s*profit/i], null);
+  const marginCol = findColumn(columns, [/profit\s*margin/i, /margin\s*%/i], null);
+  const quantityCol = columnRoles.quantity || findColumn(columns, [/^quantity$/i, /units?\s*sold/i, /^qty$/i], null);
+  const regionCol = findColumn(columns, [/^region$/i, /zone/i, /territory/i], columnRoles.state || null);
+  const categoryCol = columnRoles.category || findColumn(columns, [/^category$/i, /segment/i], null);
+  const repCol = columnRoles.employee || findColumn(columns, [/sales\s*rep/i, /salesperson/i, /representative/i, /agent/i], null);
+  const productCol = columnRoles.product || findColumn(columns, [/^product$/i, /item/i, /sku/i], null);
+  const paymentCol = findColumn(columns, [/payment\s*mode/i, /payment\s*method/i, /mode\s*of\s*payment/i], null);
+
+  if (!salesCol && !profitCol && !quantityCol) return null;
+
+  const totalSales = sumColumn(rows, salesCol);
+  const totalProfit = sumColumn(rows, profitCol);
+  const totalUnits = sumColumn(rows, quantityCol);
+  const avgMarginRaw = averageColumn(rows, marginCol);
+  const avgMarginPct = avgMarginRaw !== null
+    ? (Math.abs(avgMarginRaw) <= 1 ? avgMarginRaw * 100 : avgMarginRaw)
+    : (totalSales ? (totalProfit / totalSales) * 100 : null);
+  const salesLabel = netSalesCol ? 'Net Sales' : grossSalesCol === salesCol ? 'Gross Sales' : 'Sales';
+
+  return {
+    salesLabel,
+    columns: {
+      sales: salesCol,
+      netSales: netSalesCol,
+      grossSales: grossSalesCol,
+      profit: profitCol,
+      margin: marginCol,
+      quantity: quantityCol,
+      region: regionCol,
+      category: categoryCol,
+      salesRep: repCol,
+      product: productCol,
+      paymentMode: paymentCol,
+    },
+    overall: {
+      totalSales,
+      totalSalesFormatted: formatCompactINR(totalSales),
+      totalProfit,
+      totalProfitFormatted: profitCol ? formatCompactINR(totalProfit) : 'N/A',
+      avgProfitMargin: avgMarginPct,
+      avgProfitMarginFormatted: avgMarginPct === null ? 'N/A' : `${avgMarginPct.toFixed(1)}%`,
+      totalUnits,
+      totalUnitsFormatted: totalUnits ? totalUnits.toLocaleString('en-IN') : 'N/A',
+    },
+    regionWise: groupBySum(rows, regionCol, salesCol, 10),
+    categoryWise: groupBySum(rows, categoryCol, salesCol, 10),
+    topSalesReps: groupBySum(rows, repCol, salesCol, 5),
+    topProducts: groupBySum(rows, productCol, salesCol, 5),
+    paymentModes: groupByCount(rows, paymentCol, 8),
+    regionProfitability: groupSalesProfit(rows, regionCol, salesCol, profitCol, 10),
+    categoryProfitability: groupSalesProfit(rows, categoryCol, salesCol, profitCol, 10),
+  };
 }
 
 // ── Main Engine ─────────────────────────────────────────────────────────────
@@ -477,16 +734,20 @@ export function runAnalyticsEngine(columns, rows, validatedSchema) {
     columnRoles, kpiList, chartList, anomalyRules,
     currencySymbol, filterColumns,
   } = validatedSchema;
+  const {
+    columns: analysisColumns,
+    rows: analysisRows,
+  } = applyDerivedColumns(columns, rows, validatedSchema.derivedColumns);
 
   // Compute KPIs + Growth + Explainability
   const kpis = kpiList.map(kpi => {
-    const rawValue = computeKPIValue(kpi, rows);
-    const growth = getPeriodGrowth(kpi, rows, columnRoles.date);
+    const rawValue = computeKPIValue(kpi, analysisRows);
+    const growth = getPeriodGrowth(kpi, analysisRows, columnRoles.date);
 
     return {
       id: kpi.id,
       label: kpi.label,
-      value: formatKPIValue(rawValue, kpi, currencySymbol),
+      value: formatKPIValue(rawValue, kpi, currencySymbol, validatedSchema.currency),
       rawValue,
       desc: kpi.description || kpi.label,
       prefix: kpi.prefix || '',
@@ -506,17 +767,17 @@ export function runAnalyticsEngine(columns, rows, validatedSchema) {
   // Compute chart series
   const charts = chartList.map(chart => ({
     ...chart,
-    data: buildChartSeries(chart, rows),
+    data: buildChartSeries(chart, analysisRows),
   }));
 
   // Detect anomalies
-  const anomalies = detectAnomalies(anomalyRules || [], rows, columns);
+  const anomalies = detectAnomalies(anomalyRules || [], analysisRows, analysisColumns);
 
   // Data quality scoring
-  const dataQuality = scoreDataQuality(columns, rows, anomalies);
+  const dataQuality = scoreDataQuality(analysisColumns, analysisRows, anomalies);
 
   // Filter columns
-  const autoFilterColumns = buildFilterColumns(filterColumns, columns, rows);
+  const autoFilterColumns = buildFilterColumns(filterColumns, analysisColumns, analysisRows);
 
   // Compute dynamic executive summary from results
   const summary = generateExecutiveSummary(
@@ -525,15 +786,16 @@ export function runAnalyticsEngine(columns, rows, validatedSchema) {
     anomalies,
     validatedSchema.datasetType,
     validatedSchema.businessDomain,
-    rows.length
+    analysisRows.length
   );
 
   // Calculate realistic confidence score
-  const confidence = calculateConfidence(validatedSchema, columns);
+  const confidence = calculateConfidence(validatedSchema);
+  const businessSummary = buildBusinessSummary(analysisColumns, analysisRows, columnRoles);
 
   // Backward-compat: trendData & chartData for Dashboard.jsx
   const trendData = buildTrendData(
-    rows,
+    analysisRows,
     columnRoles.date,
     columnRoles.metric
   );
@@ -545,10 +807,14 @@ export function runAnalyticsEngine(columns, rows, validatedSchema) {
 
   return {
     // Pipeline metadata
-    pipelineVersion: '2.0',
+    pipelineVersion: '2.1-business-summary',
+    analysisVersion: '2026-07-04-visual-insights-v2',
     pipelineRunMs: Date.now() - t0,
-    model: validatedSchema._model || 'gemini-2.5-flash',
-    isAIUnavailable: false,
+    model: validatedSchema._model || 'local-deterministic-schema',
+    provider: validatedSchema._provider || 'local',
+    isAIUnavailable: Boolean(validatedSchema.isAIUnavailable),
+    aiNotice: validatedSchema.aiNotice || '',
+    aiError: validatedSchema.aiError || '',
 
     // Schema
     datasetType: validatedSchema.datasetType,
@@ -559,7 +825,9 @@ export function runAnalyticsEngine(columns, rows, validatedSchema) {
     currencyPrefix: currencySymbol,
     columnRoles,
     mappedCols,
+    derivedColumns: validatedSchema.derivedColumns || [],
     validationReport: validatedSchema.validationReport,
+    _kpiList: kpiList,
 
     // Analytics
     kpis,
@@ -568,6 +836,7 @@ export function runAnalyticsEngine(columns, rows, validatedSchema) {
     trendData,
     anomalies,
     dataQuality,
+    businessSummary,
     autoFilterColumns,
 
     // Dynamic executive summary
@@ -585,11 +854,11 @@ export function runAnalyticsEngine(columns, rows, validatedSchema) {
     mappingConfidence: confidence,
 
     // Raw data
-    fileName: rows[0]?._fileName || 'dataset',
-    columns,
-    rows,
-    rowCount: rows.length,
-    colCount: columns.length,
+    fileName: analysisRows[0]?._fileName || 'dataset',
+    columns: analysisColumns,
+    rows: analysisRows,
+    rowCount: analysisRows.length,
+    colCount: analysisColumns.length,
   };
 }
 
@@ -612,6 +881,7 @@ export function recomputeFilteredKPIs(filteredRows, analyticsResult) {
   }));
 
   const currencySymbol = analyticsResult.currencySymbol || '₹';
+  const currencyCode = analyticsResult.currency || 'INR';
 
   return kpiList.map(kpi => {
     const rawValue = computeKPIValue(kpi, filteredRows);
@@ -620,7 +890,7 @@ export function recomputeFilteredKPIs(filteredRows, analyticsResult) {
     return {
       id: kpi.id,
       label: kpi.label,
-      value: formatKPIValue(rawValue, kpi, currencySymbol),
+      value: formatKPIValue(rawValue, kpi, currencySymbol, currencyCode),
       rawValue,
       desc: kpi.description || kpi.label,
       prefix: kpi.prefix || '',

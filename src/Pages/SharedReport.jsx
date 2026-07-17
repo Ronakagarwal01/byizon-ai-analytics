@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RevenueAreaChart, CategoryBarChart } from '../components/RevenueChart';
-import { useData } from '../context/DataContext';
 import { Link, useParams } from 'react-router-dom';
 import {
-  Shield, Globe, Lock, Share2, TrendingUp, TrendingDown,
-  Download, ChevronRight, CheckCircle2, Zap,
+  Lock, Share2, TrendingUp, TrendingDown,
+  CheckCircle2, Zap,
   FileSpreadsheet, AlertCircle, AlertTriangle, Target,
-  DollarSign, ShoppingCart, Users, BarChart2, Activity
+  DollarSign, ShoppingCart, Users, BarChart2, Activity,
+  Eye, EyeOff, Loader2, LockKeyhole, ShieldCheck, Palette
 } from 'lucide-react';
 import KPICard from '../components/KPICard';
+import { getProtectedShareMetadata, unlockProtectedShare } from '../api/universalBackend';
 
 const ICON_MAP = {
   'Total Sales': DollarSign,
@@ -55,78 +56,79 @@ const ICON_BKGS = {
   'Unique SKUs': 'rgba(99,102,241,0.1)',
 };
 
-const MOCK_FALLBACK_DATA = {
-  fileName: "quarterly_sales_2026.xlsx",
-  datasetType: "Sales",
-  rowCount: 1420,
-  columns: ["Month", "Revenue", "SalesCount", "AverageOrderValue", "Category"],
-  summary: "This report provides a comprehensive analysis of the company's sales performance for the year 2026. Key findings indicate a steady growth in revenue of 18.3%, driven primarily by strong performance in the Electronics (42%) and Home (33%) categories. Total revenue reached $148,200 from 1,250 orders at an average order value of $118.56.",
-  kpis: [
-    { label: "Total Revenue", value: "$148,200", trend: "up", trendValue: "+18.3%", desc: "Total sales revenue generated." },
-    { label: "Total Orders", value: "1,250", trend: "up", trendValue: "+12.5%", desc: "Count of transactions recorded." },
-    { label: "Average Order Value", value: "$118.56", trend: "up", trendValue: "+5.1%", desc: "Average order value." },
-    { label: "Units Sold", value: "3,892", trend: "up", trendValue: "+8.2%", desc: "Total units sold." }
-  ],
-  insights: [
-    "Total revenue of $148,200 grew by 18.3% compared to the previous year, driven by holiday sales and promotional campaigns.",
-    "Electronics remains the largest product category, contributing 42% ($62,244) of total sales revenue across 1,250 orders.",
-    "Average Order Value (AOV) increased from $112.50 to $118.56 — a 5.4% improvement — indicating larger average cart sizes.",
-    "892 active customers generated 1,250 orders (avg 1.4 orders/customer), with retention rate improving by 4% year-over-year.",
-    "A minor dip in Fashion sales ($37,050 / 25% share) was observed mid-year, which recovered by Q3 through targeted promotions."
-  ],
-  recommendations: [
-    { title: "Optimize Inventory for Electronics", desc: "Increase stock levels for top-performing electronics products to prevent stockouts. Electronics contributes 42% ($62,244) of total revenue." },
-    { title: "Targeted Marketing for Fashion", desc: "Launch promotional campaigns to boost Fashion category revenue beyond its current 25% share ($37,050) by targeting low-engagement customer segments." },
-    { title: "Loyalty Program Expansion", desc: "Introduce new incentives to raise the average order value above $118.56 and grow the active customer base beyond 892." }
-  ],
-  risks: [
-    "Potential stock shortages in high-demand Electronics products due to shipping delays.",
-    "Declining performance in minor categories causing marginal drag on profit growth."
-  ],
-  strengths: [
-    "Solid revenue margins driven by primary categories (Electronics and Home).",
-    "Customer repeat transaction rate increased by 12% MoM."
-  ],
-  weaknesses: [
-    "Seasonal sales declines observed mid-year in the Fashion segment.",
-    "Data collection gap in late December causing incomplete monthly analytics representation."
-  ],
-  opportunities: [
-    "Introduce digital bundling of products to cross-sell Electronics and Home segments.",
-    "Leverage email campaigns focused on customer retention during Q3."
-  ],
-  conclusion: "The quarterly sales performance for 2026 demonstrates robust financial health, led by Electronics. Addressing stock levels and inventory planning in Electronics while boosting Fashion sales via loyalty campaigns will drive high returns in subsequent quarters.",
-  anomalies: [
-    "Extreme revenue transaction outlier ($5,400) recorded in August.",
-    "Expected transaction dip in December due to year-end ledger cut-offs."
-  ],
-  chartData: [
-    { name: "Electronics", value: 62244 },
-    { name: "Fashion",     value: 37050 },
-    { name: "Home",        value: 48906 }
-  ],
-  trendData: [
-    { month: "Jan", revenue: 7800  },
-    { month: "Feb", revenue: 9600  },
-    { month: "Mar", revenue: 10200 },
-    { month: "Apr", revenue: 11100 },
-    { month: "May", revenue: 12400 },
-    { month: "Jun", revenue: 13100 },
-    { month: "Jul", revenue: 13800 },
-    { month: "Aug", revenue: 14500 },
-    { month: "Sep", revenue: 15200 },
-    { month: "Oct", revenue: 16800 },
-    { month: "Nov", revenue: 17100 },
-    { month: "Dec", revenue: 6600  }
-  ],
-  categoryColExists: true,
-  mappedCols: { category: "Category", metric: "Revenue" }
-};
+function formatMaybeNumber(value, suffix = '') {
+  if (value === null || value === undefined || value === '') return 'N/A';
+  if (typeof value === 'number') return `${value.toLocaleString('en-IN', { maximumFractionDigits: 2 })}${suffix}`;
+  return `${value}${suffix}`;
+}
+
+function severityColors(severity = 'Low') {
+  const normalized = String(severity).toLowerCase();
+  if (normalized === 'high' || normalized === 'critical') {
+    return { bg: 'rgba(239,68,68,0.12)', border: 'rgba(239,68,68,0.32)', color: '#f87171' };
+  }
+  if (normalized === 'medium' || normalized === 'warning') {
+    return { bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.32)', color: '#fbbf24' };
+  }
+  return { bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.28)', color: '#34d399' };
+}
+
+function SeverityBadge({ severity }) {
+  const colors = severityColors(severity);
+  return (
+    <span style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      padding: '4px 9px',
+      borderRadius: 999,
+      background: colors.bg,
+      border: `1px solid ${colors.border}`,
+      color: colors.color,
+      fontSize: 11,
+      fontWeight: 800,
+      textTransform: 'uppercase'
+    }}>
+      {severity || 'Low'}
+    </span>
+  );
+}
 
 export default function SharedReport() {
-  const { uploadedData: contextData } = useData();
   const [copied, setCopied] = useState(false);
   const { reportId } = useParams();
+  const [uploadedData, setUploadedData] = useState(null);
+  const [metadata, setMetadata] = useState(null);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [unlocking, setUnlocking] = useState(false);
+  const [accessError, setAccessError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setAccessError('');
+    getProtectedShareMetadata(reportId)
+      .then(value => active && setMetadata(value))
+      .catch(err => active && setAccessError(err.message))
+      .finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, [reportId]);
+
+  const unlockReport = async (event) => {
+    event.preventDefault();
+    if (!password || unlocking) return;
+    setUnlocking(true);
+    setAccessError('');
+    try {
+      setUploadedData(await unlockProtectedShare(reportId, password));
+      setPassword('');
+    } catch (err) {
+      setAccessError(err.message);
+    } finally {
+      setUnlocking(false);
+    }
+  };
 
   const handleCopyLink = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -134,11 +136,68 @@ export default function SharedReport() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleExportPDF = () => {
-    window.print();
-  };
+  if (!uploadedData) {
+    return (
+      <div className="shared-page protected-share-page">
+        <div className="shared-topbar">
+          <div className="shared-branding">
+            <div style={{ width: 32, height: 32, background: 'linear-gradient(135deg,#2563eb,#60a5fa)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 13, color: 'white' }}>D</div>
+            <span style={{ fontWeight: 800, fontSize: 17, marginLeft: 8 }}>DSI</span>
+          </div>
+        </div>
+        <div className="shared-content">
+          <section className="protected-share-gate" aria-labelledby="protected-report-title">
+            <div className="protected-share-icon">{loading ? <Loader2 size={26} className="spin" /> : <LockKeyhole size={26} />}</div>
+            <span className="section-kicker">Encrypted live report</span>
+            <h1 id="protected-report-title">{loading ? 'Checking protected link...' : metadata?.fileName || 'Protected report'}</h1>
+            <p>This report contains private analytical data. Enter the password provided by the report owner to continue.</p>
+            {!loading && metadata ? (
+              <form onSubmit={unlockReport}>
+                <label>
+                  <span>Report password</span>
+                  <div>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={event => setPassword(event.target.value)}
+                      placeholder="Enter password"
+                      autoComplete="current-password"
+                      autoFocus
+                    />
+                    <button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                      {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                    </button>
+                  </div>
+                </label>
+                {accessError && <div className="secure-dialog-error" role="alert">{accessError}</div>}
+                <button className="secure-dialog-submit" type="submit" disabled={unlocking || !password}>
+                  {unlocking ? <Loader2 size={17} className="spin" /> : <ShieldCheck size={17} />}
+                  {unlocking ? 'Verifying...' : 'Unlock report'}
+                </button>
+              </form>
+            ) : !loading && (
+              <>
+                <div className="secure-dialog-error">{accessError || 'This protected report is unavailable.'}</div>
+                <Link to="/"><button className="btn-outline">Return to Byizon</button></Link>
+              </>
+            )}
+            <small>Five incorrect attempts lock this link. The owner can revoke it and generate a new one.</small>
+          </section>
+        </div>
+      </div>
+    );
+  }
 
-  const uploadedData = contextData || MOCK_FALLBACK_DATA;
+  const qualitySummary = uploadedData.dataQualitySummary || {
+    completenessScore: uploadedData.dataQuality?.completeness ?? 'N/A',
+    qualityScore: uploadedData.dataQuality?.quality ?? 'N/A',
+    duplicateCount: uploadedData.dataQuality?.duplicatesCount || 0,
+    missingCellCount: uploadedData.dataQuality?.emptyCount || 0,
+    outlierCount: uploadedData.dataQuality?.outliersCount || 0,
+    severity: uploadedData.dataQuality?.severity || 'Low',
+  };
+  const missingSummary = uploadedData.missingValueSummary || [];
+  const outlierSummary = uploadedData.outlierSummary || [];
 
   return (
     <div className="shared-page">
@@ -190,14 +249,18 @@ export default function SharedReport() {
             <div style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--success)' }} />
             Live
           </div>
+          <Link
+            to={`/studio/${reportId}`}
+            className="shared-studio-link"
+            title="Customize this dashboard"
+          >
+            <Palette size={13} /> Customize
+          </Link>
           <button 
             onClick={handleCopyLink}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', background: 'transparent', border: '1px solid var(--border-subtle)', borderRadius: 999, fontSize: 12, color: copied ? 'var(--success)' : 'var(--text-secondary)', cursor: 'pointer' }}
           >
             <Share2 size={11} /> {copied ? 'Link Copied!' : 'Share'}
-          </button>
-          <button onClick={handleExportPDF} className="btn-primary" style={{ fontSize: 12, padding: '7px 16px', gap: 6 }}>
-            <Download size={12} /> Export PDF
           </button>
         </div>
       </div>
@@ -207,10 +270,10 @@ export default function SharedReport() {
         {/* Header */}
         <div className="shared-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-            <span className="badge badge-blue"><Globe size={11} /> Public Report</span>
+            <span className="badge badge-blue"><Lock size={11} /> Password-protected Report</span>
             <span className="badge badge-green"><CheckCircle2 size={11} /> Auto-analyzed</span>
             <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              {uploadedData.rowCount.toLocaleString()} rows · {uploadedData.columns.length} columns · {uploadedData.model || 'Gemini-2.5-Flash'}
+              {uploadedData.rowCount.toLocaleString()} rows · {uploadedData.columns.length} columns · {uploadedData.model || 'Local Analytics'}
             </span>
           </div>
           <h1 style={{ fontSize: 32, fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>
@@ -225,8 +288,8 @@ export default function SharedReport() {
         </div>
 
         <div className="shared-body">
-          {/* Gemini Unavailability / Fallback Warning Banner */}
-          {uploadedData.isGeminiUnavailable && (
+          {/* Optional AI Unavailability / Fallback Warning Banner */}
+          {(uploadedData.isAIUnavailable || uploadedData.isGeminiUnavailable) && (
             <div style={{
               display: 'flex',
               alignItems: 'center',
@@ -241,7 +304,7 @@ export default function SharedReport() {
               fontWeight: 500
             }}>
               <AlertTriangle size={18} style={{ flexShrink: 0 }} />
-              <span>{uploadedData.geminiError || "AI insights are temporarily unavailable due to Gemini server load. Local analytics are still available."}</span>
+              <span>{uploadedData.aiNotice || uploadedData.aiError || uploadedData.geminiError || "Optional AI narrative is unavailable. Local analytics are still available."}</span>
             </div>
           )}
 
@@ -259,27 +322,26 @@ export default function SharedReport() {
           {/* Data Quality Section */}
           {uploadedData.dataQuality && (
             <div className="report-section animate-fadeInUp" style={{ marginBottom: 24 }}>
-              <div className="report-section-title" style={{ fontSize: 16, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Activity size={18} color="var(--blue-400)" />
-                Dataset Quality & Completeness Audit
+              <div className="report-section-title" style={{ fontSize: 16, marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Activity size={18} color="var(--blue-400)" />
+                  Dataset Quality & Completeness Audit
+                </span>
+                <SeverityBadge severity={qualitySummary.severity} />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
-                <div style={{ padding: '12px 14px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Completeness Rate</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--blue-400)', marginTop: 4 }}>{uploadedData.dataQuality.completeness}%</div>
-                </div>
-                <div style={{ padding: '12px 14px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Quality Score</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: uploadedData.dataQuality.quality > 90 ? 'var(--success)' : 'var(--warning)', marginTop: 4 }}>{uploadedData.dataQuality.quality}%</div>
-                </div>
-                <div style={{ padding: '12px 14px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Empty Mapped Cells</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: uploadedData.dataQuality.emptyCount > 0 ? 'var(--warning)' : 'var(--text-primary)', marginTop: 4 }}>{uploadedData.dataQuality.emptyCount}</div>
-                </div>
-                <div style={{ padding: '12px 14px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Duplicates Mapped</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: uploadedData.dataQuality.duplicatesCount > 0 ? 'var(--warning)' : 'var(--text-primary)', marginTop: 4 }}>{uploadedData.dataQuality.duplicatesCount}</div>
-                </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16 }}>
+                {[
+                  ['Completeness', formatMaybeNumber(qualitySummary.completenessScore, '%')],
+                  ['Quality Score', `${formatMaybeNumber(qualitySummary.qualityScore)}/100`],
+                  ['Missing Cells', formatMaybeNumber(qualitySummary.missingCellCount)],
+                  ['Duplicates', formatMaybeNumber(qualitySummary.duplicateCount)],
+                  ['Outliers', formatMaybeNumber(qualitySummary.outlierCount)],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ padding: '12px 14px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text-primary)', marginTop: 4 }}>{value}</div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -306,7 +368,7 @@ export default function SharedReport() {
                     <div className="chart-card-subtitle">AI-extracted</div>
                   </div>
                 </div>
-                {uploadedData.categoryColExists ? (
+                {(uploadedData.categoryColExists || uploadedData.chartData?.length > 0) ? (
                   <CategoryBarChart data={uploadedData.chartData} />
                 ) : (
                   <div style={{
@@ -438,18 +500,34 @@ export default function SharedReport() {
             </div>
           )}
 
-          {/* AI Data Anomalies */}
-          {uploadedData.anomalies?.length > 0 && (
+          {/* Grouped Data Quality Findings */}
+          {(missingSummary.length > 0 || outlierSummary.length > 0) && (
             <div className="report-section" style={{ marginBottom: 24 }}>
               <div className="report-section-title" style={{ fontSize: 16, marginBottom: 14 }}>
                 <AlertTriangle size={16} color="#ef4444" />
-                Data Anomalies & Outliers
+                Grouped Data Quality Findings
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {uploadedData.anomalies.map((anom, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '16px', background: 'rgba(239,68,68,0.03)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 'var(--radius-md)' }} className="animate-fadeInUp">
-                    <AlertTriangle size={15} color="#ef4444" style={{ flexShrink: 0, marginTop: 2 }} />
-                    <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{anom}</span>
+                {missingSummary.slice(0, 5).map((item, i) => (
+                  <div key={`missing-${item.column}-${i}`} style={{ padding: '14px 16px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }} className="animate-fadeInUp">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+                      <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>{item.column}</strong>
+                      <SeverityBadge severity={item.severity} />
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                      {item.missingCount.toLocaleString('en-IN')} missing values ({item.missingPercent}%). {item.recommendedAction}
+                    </div>
+                  </div>
+                ))}
+                {outlierSummary.slice(0, 5).map((item, i) => (
+                  <div key={`outlier-${item.column}-${i}`} style={{ padding: '14px 16px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }} className="animate-fadeInUp">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+                      <strong style={{ fontSize: 14, color: 'var(--text-primary)' }}>{item.column}</strong>
+                      <SeverityBadge severity={item.severity} />
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                      {item.totalOutliers.toLocaleString('en-IN')} outliers. Normal IQR range {formatMaybeNumber(item.normalRange?.lower)} to {formatMaybeNumber(item.normalRange?.upper)}. {item.recommendedAction}
+                    </div>
                   </div>
                 ))}
               </div>

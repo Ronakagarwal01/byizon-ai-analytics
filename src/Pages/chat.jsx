@@ -7,7 +7,7 @@ import {
   TrendingUp, AlertTriangle, Lightbulb, Target
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { askGeminiChat } from '../api/gemini';
+import { askDataChat } from '../api/huggingface';
 
 function TypingIndicator() {
   return (
@@ -26,152 +26,9 @@ function TypingIndicator() {
   );
 }
 
-/** Build a context-aware response from real uploadedData */
-function buildResponse(question, data) {
-  const q = question.toLowerCase();
-  const cur = data.currencyPrefix || '₹';
-
-  if (q.includes('summar') || q.includes('overview') || q.includes('about') || q.includes('file')) {
-    return {
-      text: data.summary,
-      pills: [
-        { label: `${data.rowCount.toLocaleString()} rows scanned`, state: 'done' },
-        { label: `${data.columns.length} columns analyzed`, state: 'done' },
-      ],
-      preview: true,
-    };
-  }
-
-  if (q.includes('highest') || q.includes('max') || q.includes('peak') || q.includes('largest')) {
-    return {
-      text: `The **Highest Sale** recorded in this dataset is **${data.highestSaleFormatted}**.\n\nThis transaction represents the single largest order value in the selected period.`,
-      pills: [
-        { label: 'Highest sale queried', state: 'done' }
-      ],
-      preview: false
-    };
-  }
-
-  if (q.includes('lowest') || q.includes('min') || q.includes('smallest')) {
-    return {
-      text: `The **Lowest Sale** recorded in this dataset is **${data.lowestSaleFormatted}**.\n\nThis transaction represents the single smallest order value in the selected period.`,
-      pills: [
-        { label: 'Lowest sale queried', state: 'done' }
-      ],
-      preview: false
-    };
-  }
-
-  if (q.includes('aov') || q.includes('average order') || q.includes('average transaction')) {
-    return {
-      text: `The **Average Order Value (AOV)** is **${data.avgOrderValueFormatted}**.\n\nThis is calculated as Total Sales (${data.totalRevenueFormatted}) divided by the transaction count (${data.transactionCount.toLocaleString()}).`,
-      pills: [
-        { label: 'AOV calculated', state: 'done' }
-      ],
-      preview: false
-    };
-  }
-
-  if (q.includes('revenue') || q.includes('sale') || q.includes('performance') || q.includes('earn') || q.includes('kpi') || q.includes('metric')) {
-    const kpiLines = data.kpis.map(k => `**${k.label}:** ${k.value} (${k.trendValue})`).join('\n');
-    return {
-      text: `Here are the key metrics computed from **${data.fileName}**:\n\n${kpiLines}`,
-      pills: [
-        { label: 'KPIs retrieved', state: 'done' },
-        { label: 'Trends calculated', state: 'done' },
-      ],
-      preview: true,
-    };
-  }
-
-  if (q.includes('order') || q.includes('qty') || q.includes('unit') || q.includes('sold') || q.includes('count')) {
-    return {
-      text: `Based on the uploaded file, here is the order volume breakdown:\n- **Total Orders KPI:** ${data.totalUnits.toLocaleString()} (sum of Units Sold as per requirements)\n- **Transaction/Row Count:** ${data.transactionCount.toLocaleString()} individual orders\n- **Total Products/Units Sold:** ${data.totalUnits.toLocaleString()} units`,
-      pills: [
-        { label: 'Orders parsed', state: 'done' },
-        { label: 'Volume aggregated', state: 'done' }
-      ],
-      preview: false
-    };
-  }
-
-  if (q.includes('category') || q.includes('categories') || q.includes('segment')) {
-    const categoriesList = data.chartData.map((cat, i) => `${i + 1}. **${cat.name}** — ${cur}${cat.value.toLocaleString()}`).join('\n');
-    return {
-      text: `There are **${data.uniqueCategoriesCount}** unique categories in **${data.fileName}**.\n\n**Top Category:** "${data.topCategory}" contributes **${data.topCategoryShare}%** of total sales.\n\n**Revenue Breakdown by Category:**\n${categoriesList}\n\n**Low-Performing Category:** "${data.bottomCategory}"`,
-      pills: [
-        { label: 'Categories analyzed', state: 'done' },
-      ],
-      preview: false,
-    };
-  }
-
-  if (q.includes('product') || q.includes('top seller') || q.includes('popular')) {
-    return {
-      text: `The top-selling product by total sales revenue is **"${data.topProduct}"**, which contributed **${data.topProductShare}%** of all sales revenue.\n\nTo see the full product breakdowns, please view the **Reports** or **Dashboard** tabs.`,
-      pills: [
-        { label: 'Products analyzed', state: 'done' }
-      ],
-      preview: false
-    };
-  }
-
-  if (q.includes('insight') || q.includes('finding') || q.includes('pattern') || q.includes('trend') || q.includes('discover')) {
-    const insightLines = data.insights.map((ins, i) => `${i + 1}. ${ins}`).join('\n');
-    return {
-      text: `Key insights from **${data.fileName}**:\n\n${insightLines}`,
-      pills: [
-        { label: 'Patterns identified', state: 'done' },
-        { label: 'Anomalies checked', state: 'done' },
-      ],
-      preview: false,
-    };
-  }
-
-  if (q.includes('recommend') || q.includes('suggest') || q.includes('action') || q.includes('next step') || q.includes('what should')) {
-    const recLines = data.recommendations.map((r, i) => `**${i + 1}. ${r.title}**\n${r.desc}`).join('\n\n');
-    return {
-      text: `Based on **${data.fileName}**, here are the recommendations:\n\n${recLines}`,
-      pills: [
-        { label: 'Analysis complete', state: 'done' },
-        { label: 'Recommendations ready', state: 'done' },
-      ],
-      preview: false,
-    };
-  }
-
-  if (q.includes('column') || q.includes('field') || q.includes('structure') || q.includes('data type')) {
-    return {
-      text: `**${data.fileName}** has **${data.columns.length} columns** and **${data.rowCount.toLocaleString()} rows**.\n\nColumns detected: ${data.columns.map(c => `\`${c}\``).join(', ')}`,
-      pills: [
-        { label: `${data.columns.length} columns found`, state: 'done' },
-      ],
-      preview: false,
-    };
-  }
-
-  if (q.includes('anomal') || q.includes('outlier') || q.includes('problem') || q.includes('issue') || q.includes('risk') || q.includes('decline')) {
-    return {
-      text: `Potential risks and findings in **${data.fileName}**:\n\n- Low-performing category: **"${data.bottomCategory}"**\n- Smallest transaction value recorded: **${data.lowestSaleFormatted}**\n\nThe overall dataset looks consistent with ${data.rowCount.toLocaleString()} rows and no major structural errors.`,
-      pills: [
-        { label: 'Anomaly scan complete', state: 'done' },
-      ],
-      preview: false,
-    };
-  }
-
-  return {
-    text: `I can help you analyze **${data.fileName}** offline.\n\n${data.summary}\n\nTry asking about:\n- **Total Sales & Revenue**\n- **Total Orders / Quantity Sold**\n- **Average Order Value (AOV)**\n- **Highest and Lowest Sale**\n- **Top Product & Top Category**\n- **Insights & Recommendations**`,
-    pills: [
-      { label: `${data.fileName} loaded`, state: 'done' },
-    ],
-    preview: true,
-  };
-}
-
 // BUG-01 FIX: msgId moved inside component via useRef — no more global mutable var
 export default function Chat() {
-  const { uploadedData } = useData();
+  const { uploadedData, setUploadedData } = useData();
 
   // BUG-01 FIX: useRef for stable, non-resetting ID counter
   const msgIdRef = useRef(1);
@@ -205,8 +62,6 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typing]);
 
-  const delay = ms => new Promise(r => setTimeout(r, ms));
-
   const sendMsg = async (text) => {
     // BUG-10 FIX: guard both empty string and whitespace-only
     if (!text.trim() || !uploadedData || typing) return;
@@ -224,7 +79,13 @@ export default function Chat() {
     setTyping(true);
 
     try {
-      const reply = await askGeminiChat(text, uploadedData, messages);
+      const response = await askDataChat(text, uploadedData, messages);
+      const reply = typeof response === 'string' ? response : response.answer;
+      if (typeof response === 'object' && response.analysis) {
+        setUploadedData({ ...response.analysis, sessionId: response.sessionId || response.analysis.sessionId });
+      } else if (typeof response === 'object' && response.clearActiveAnalysis) {
+        setUploadedData(null);
+      }
       setTyping(false);
 
       const aiMsg = {
@@ -232,7 +93,7 @@ export default function Chat() {
         role: 'ai',
         text: reply,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        pills: [{ label: uploadedData.model || 'Gemini-2.5-Flash', state: 'done' }],
+        pills: [{ label: uploadedData.model || 'Local + HF', state: 'done' }],
         preview: text.toLowerCase().includes('kpi') || text.toLowerCase().includes('metric') || text.toLowerCase().includes('revenue'),
       };
       setMessages(prev => [...prev, aiMsg]);
@@ -241,7 +102,7 @@ export default function Chat() {
       const errAlertMsg = {
         id: msgIdRef.current++,
         role: 'ai',
-        text: `⚠️ **Error Contacting Gemini**\n\n${err.message}`,
+        text: `⚠️ **Chat Error**\n\n${err.message}`,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         pills: [{ label: 'Failed', state: 'pending' }],
         preview: false,
@@ -327,9 +188,9 @@ export default function Chat() {
   return (
     <div className="app-layout">
       <Sidebar />
-      <main className="main-content" style={{ display: 'flex', flexDirection: 'column', padding: '24px 32px' }}>
+      <main className="main-content chat-page-main">
 
-        <div className="page-header" style={{ marginBottom: 16 }}>
+        <div className="page-header chat-page-header">
           <div>
             <h1 className="page-title">Data Chat</h1>
             <p className="page-subtitle">
@@ -339,7 +200,7 @@ export default function Chat() {
           </div>
         </div>
 
-        <div className="chat-layout" style={{ flex: 1 }}>
+        <div className="chat-layout">
 
           {/* Main chat window */}
           <div className="chat-main">
@@ -364,9 +225,9 @@ export default function Chat() {
                     <FileText size={12} /> Reports
                   </button>
                 </Link>
-                <Link to="/report/shared">
+                <Link to="/reports">
                   <button className="btn-outline" style={{ fontSize: 12, padding: '5px 12px', gap: 5 }}>
-                    <Share2 size={12} /> Share
+                    <Share2 size={12} /> Secure Share
                   </button>
                 </Link>
               </div>
@@ -434,14 +295,20 @@ export default function Chat() {
             <div className="chat-input-wrap">
               <div className="chat-input-row">
                 <Zap size={16} color="var(--blue-400)" style={{ flexShrink: 0 }} />
-                <input
+                <textarea
                   className="chat-input"
                   placeholder={`Ask about ${uploadedData.fileName || 'the data'}…`}
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  // BUG-10 FIX: full guard — empty string AND whitespace protected
-                  onKeyDown={e => e.key === 'Enter' && !typing && input.trim() && sendMsg(input)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey && !typing && input.trim()) {
+                      e.preventDefault();
+                      sendMsg(input);
+                    }
+                  }}
                   disabled={typing}
+                  rows={1}
+                  aria-label="Ask a question about the current dataset"
                 />
                 <button
                   className="chat-send-btn"
