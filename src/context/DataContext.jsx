@@ -3,6 +3,7 @@ import { clearBackendSession, getAuthSession, validateConnectedSource } from '..
 
 const DataContext = createContext(null);
 const CURRENT_ANALYSIS_VERSION = '2026-07-15-source-isolation-v8';
+const ACTIVE_SESSION_KEY = 'dsi_active_analysis_session:2026-07-23-v2-no-autoload';
 
 function createReportId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -47,6 +48,23 @@ function parseStoredChat(raw) {
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
+  }
+}
+
+function rememberActiveSession(sessionId) {
+  try {
+    if (sessionId) sessionStorage.setItem(ACTIVE_SESSION_KEY, sessionId);
+    else sessionStorage.removeItem(ACTIVE_SESSION_KEY);
+  } catch {
+    // Session storage can be unavailable in private or restricted browser modes.
+  }
+}
+
+function rememberedActiveSession() {
+  try {
+    return sessionStorage.getItem(ACTIVE_SESSION_KEY);
+  } catch {
+    return null;
   }
 }
 
@@ -98,7 +116,14 @@ export function DataProvider({ children }) {
         localStorage.removeItem('dsi_chat_history_by_session');
 
         setWorkspaceUserId(currentId);
-        setUploadedDataState(parseStoredDataset(localStorage.getItem(datasetStorageKey(currentId))));
+        const storedDataset = parseStoredDataset(localStorage.getItem(datasetStorageKey(currentId)));
+        const activeSessionId = rememberedActiveSession();
+        if (storedDataset && activeSessionId && storedDataset.sessionId === activeSessionId) {
+          setUploadedDataState(storedDataset);
+        } else {
+          setUploadedDataState(null);
+          localStorage.removeItem(datasetStorageKey(currentId));
+        }
         setChatHistoryState(parseStoredChat(localStorage.getItem(chatStorageKey(currentId))));
         localStorage.setItem('dsi_workspace_id', currentId);
       })
@@ -173,6 +198,7 @@ export function DataProvider({ children }) {
     setUploadedDataState(normalized);
     try {
       if (normalized) {
+        rememberActiveSession(normalized.sessionId);
         if (previousSessionId && previousSessionId !== normalized.sessionId) {
           clearBackendSession(previousSessionId).catch(() => {});
           persistChat(Object.fromEntries(
@@ -183,6 +209,7 @@ export function DataProvider({ children }) {
           localStorage.setItem(datasetStorageKey(ownerId), JSON.stringify(buildStoredDataset(normalized)));
         }
       } else {
+        rememberActiveSession(null);
         if (previousSessionId) clearBackendSession(previousSessionId).catch(() => {});
         if (ownerId) localStorage.removeItem(datasetStorageKey(ownerId));
         setPipelineStages([]);

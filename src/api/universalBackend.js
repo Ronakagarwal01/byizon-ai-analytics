@@ -11,8 +11,13 @@ function apiBase() {
   return (import.meta.env.VITE_ANALYTICS_API_BASE || DEFAULT_ANALYTICS_API_BASE).replace(/\/$/, '');
 }
 
-function apiFetch(url, options = {}) {
-  return globalThis.fetch(url, { credentials: 'include', ...options });
+async function apiFetch(url, options = {}) {
+  try {
+    return await globalThis.fetch(url, { credentials: 'include', ...options });
+  } catch (error) {
+    const localHint = isLocalBrowser ? ' Start Byizon with "npm run dev" and retry.' : '';
+    throw new Error(`Byizon analytics service is temporarily unavailable.${localHint}`, { cause: error });
+  }
 }
 
 export function isUniversalBackendFile(fileName = '') {
@@ -72,6 +77,67 @@ export async function analyzeFileWithBackend(file) {
   return { ...payload.analysis, sessionId: payload.sessionId || payload.analysis?.sessionId };
 }
 
+export async function getAnalyticsDataset(id, options = {}) {
+  if (!id) throw new Error('Analytics dataset id is required.');
+  const params = new URLSearchParams();
+  if (options.page) params.set('page', options.page);
+  if (options.pageSize) params.set('pageSize', options.pageSize);
+  Object.entries(options.filters || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiFetch(`${apiBase()}/api/analytics-dataset/${encodeURIComponent(id)}${suffix}`);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Analytics dataset could not be loaded (${response.status}).`);
+  }
+  return payload.analyticsDataset;
+}
+
+export async function refreshAnalyticsDataset(sessionId, refreshKind = 'manual') {
+  if (!sessionId) throw new Error('Session id is required to refresh analytics dataset.');
+  const response = await apiFetch(`${apiBase()}/api/analytics-dataset/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, refreshKind }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Analytics dataset refresh failed (${response.status}).`);
+  }
+  return payload.analyticsDataset;
+}
+
+export async function getPowerBiManifest(id) {
+  if (!id) throw new Error('Analytics dataset id is required.');
+  const response = await apiFetch(`${apiBase()}/api/powerbi/manifest/${encodeURIComponent(id)}`);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Power BI manifest could not be loaded (${response.status}).`);
+  }
+  return payload;
+}
+
+export async function getPowerBiSemanticView(id, viewName, options = {}) {
+  if (!id) throw new Error('Analytics dataset id is required.');
+  if (!viewName) throw new Error('Power BI semantic view name is required.');
+  const params = new URLSearchParams();
+  if (options.page) params.set('page', options.page);
+  if (options.pageSize) params.set('pageSize', options.pageSize);
+  Object.entries(options.filters || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') params.set(key, value);
+  });
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiFetch(
+    `${apiBase()}/api/powerbi/semantic-view/${encodeURIComponent(id)}/${encodeURIComponent(viewName)}${suffix}`,
+  );
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Power BI semantic view could not be loaded (${response.status}).`);
+  }
+  return payload;
+}
+
 export async function askBackendChat(question, analysis, history = []) {
   const response = await apiFetch(`${apiBase()}/api/chat`, {
     method: 'POST',
@@ -82,7 +148,6 @@ export async function askBackendChat(question, analysis, history = []) {
       selectedReportSection: null,
       filters: null,
       conversationHistorySummary: history.slice(-8).map(m => `${m.role}: ${String(m.text || '').slice(0, 300)}`).join('\n'),
-      analysis: analysis?.sessionId ? undefined : analysis,
     }),
   });
   const payload = await response.json().catch(() => null);
@@ -96,6 +161,12 @@ export async function askBackendChat(question, analysis, history = []) {
     sessionId: payload.sessionId || payload.analysis?.sessionId || null,
     source: payload.source || null,
     clearActiveAnalysis: Boolean(payload.clearActiveAnalysis),
+    task: payload.task || null,
+    capability: payload.capability || null,
+    choices: payload.choices || [],
+    queryPlan: payload.queryPlan || null,
+    contextAudit: payload.contextAudit || null,
+    dataFlow: payload.dataFlow || [],
   };
 }
 
@@ -179,9 +250,20 @@ export async function disconnectBusinessTool(connectionId) {
   return payload;
 }
 
-export function oauthStartUrl(connectorId, returnPath = '/connections') {
+export function oauthStartUrl(connectorId, returnPath = '/connections', capability = '') {
   const returnUrl = `${window.location.origin}${returnPath}`;
-  return `${apiBase()}/api/oauth/start/${encodeURIComponent(connectorId)}?returnUrl=${encodeURIComponent(returnUrl)}`;
+  const params = new URLSearchParams({ returnUrl });
+  if (capability) params.set('capability', capability);
+  return `${apiBase()}/api/oauth/start/${encodeURIComponent(connectorId)}?${params.toString()}`;
+}
+
+export async function getAutomationActivities(limit = 30) {
+  const response = await apiFetch(`${apiBase()}/api/activities?limit=${encodeURIComponent(limit)}`);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Activity history could not be loaded (${response.status}).`);
+  }
+  return payload.activities || [];
 }
 
 export async function getConnectionResources(connectionId) {

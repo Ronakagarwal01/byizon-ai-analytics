@@ -1,19 +1,23 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
-  BarChart3, ChevronRight, Crown, Database, FileText, LayoutGrid,
-  LogOut, Menu, MessageSquarePlus, PanelsTopLeft, PlugZap, Settings, Sparkles, X,
+  BarChart3, BriefcaseBusiness, CalendarDays, ChevronRight, Crown, Database,
+  FileText, LayoutGrid, LogOut, Menu, MessageSquarePlus, PanelsTopLeft,
+  PlugZap, Settings, Sparkles, UsersRound, X,
 } from 'lucide-react';
 import { getAuthSession, logoutWorkspace } from '../api/universalBackend';
 
 const navItems = [
-  { label: 'New Chat', icon: MessageSquarePlus, path: '/' },
   { label: 'Dashboard', icon: LayoutGrid, path: '/dashboard' },
-  { label: 'Customized Dashboard', icon: PanelsTopLeft, path: '/studio' },
+  { label: 'AI Chat', icon: MessageSquarePlus, path: '/' },
+  { label: 'Meetings', icon: UsersRound, path: '/meetings' },
+  { label: 'CRM', icon: BriefcaseBusiness, path: '/connections?filter=CRM' },
+  { label: 'Calendar', icon: CalendarDays, path: '/calendar' },
   { label: 'Data Sources', icon: Database, path: '/upload' },
+  { label: 'Analytics', icon: Sparkles, path: '/chat' },
   { label: 'Integrations', icon: PlugZap, path: '/connections', badge: 'New' },
+  { label: 'Update UI', icon: PanelsTopLeft, path: '/studio' },
   { label: 'Reports', icon: FileText, path: '/reports' },
-  { label: 'AI Insights', icon: Sparkles, path: '/chat' },
 ];
 
 const GUEST_USER = {
@@ -23,7 +27,7 @@ const GUEST_USER = {
 };
 
 export default function Sidebar() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [isOpen, setIsOpen] = useState(false);
   const [user, setUser] = useState(GUEST_USER);
 
@@ -58,11 +62,19 @@ export default function Sidebar() {
         <button className="sidebar-close-btn" onClick={() => setIsOpen(false)} aria-label="Close navigation"><X size={18} /></button>
         <Link to="/" className="byizon-logo" onClick={() => setIsOpen(false)}>
           <span>Byi</span><b>zon</b><Sparkles size={12} />
+          <small>Enterprise AI OS</small>
         </Link>
 
         <nav className="sidebar-nav byizon-nav" aria-label="Primary navigation">
+          <span className="byizon-nav-label">Workspace</span>
           {navItems.map(({ label, icon: Icon, path, badge }) => {
-            const active = path === '/' ? pathname === '/' : pathname === path || pathname.startsWith(`${path}/`);
+            const routePath = path.split('?')[0];
+            const hasQuery = path.includes('?');
+            const active = hasQuery
+              ? pathname === routePath && search === `?${path.split('?')[1]}`
+              : routePath === '/'
+                ? pathname === '/'
+                : pathname === routePath || pathname.startsWith(`${routePath}/`);
             return (
               <Link
                 key={label}
@@ -70,7 +82,7 @@ export default function Sidebar() {
                 className={`sidebar-item ${active ? 'active' : ''}`}
                 onClick={() => {
                   setIsOpen(false);
-                  if (path === '/') window.dispatchEvent(new Event('byizon:new-chat'));
+                  if (routePath === '/') window.dispatchEvent(new Event('byizon:new-chat'));
                 }}
               >
                 <Icon size={16} />

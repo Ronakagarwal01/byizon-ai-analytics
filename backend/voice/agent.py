@@ -3,12 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.error
-import urllib.request
 from typing import Any
 
+from ..ai.orchestrator import configured as ai_configured, orchestrate_text
 from .memory import VoiceMemory
-from .tool_catalog import openai_tools
 
 MEMORY = VoiceMemory()
 PAGE_WORDS = {
@@ -19,7 +17,7 @@ PAGE_WORDS = {
 
 
 def configured() -> bool:
-    return bool(os.getenv("OPENAI_API_KEY", "").strip() or _hf_key())
+    return ai_configured()
 
 
 def huggingface_configured() -> bool:
@@ -32,6 +30,20 @@ def _hf_key() -> str:
 
 def _local_command(text: str) -> dict | None:
     value = text.lower().strip()
+    google_service = any(term in value for term in (
+        "gmail", "email", "mail", "calendar", "google meet", "meet link",
+        "meeting link", "google sheet", "spreadsheet", "google doc", "document",
+    ))
+    google_action = any(term in value for term in (
+        "send", "bhejo", "bhjo", "bhaj", "create", "banao", "schedule",
+        "book", "append", "write", "save",
+    ))
+    if google_service and google_action:
+        return {
+            "response": "I am running that command through your authorized Google account.",
+            "toolCalls": [{"name": "run_connected_command", "arguments": {"command": text}}],
+            "source": "deterministic",
+        }
     if any(term in value for term in ("live link", "share link", "sharing link", "protected link")) and any(
         term in value for term in ("generate", "create", "banao", "bana do", "banado", "do", "share")
     ):
@@ -58,68 +70,37 @@ def _local_command(text: str) -> dict | None:
     return None
 
 
-def _openai_agent(transcript: str, context: dict, memories: list[dict]) -> dict:
-    key = os.getenv("OPENAI_API_KEY", "").strip()
-    model = os.getenv("OPENAI_AGENT_MODEL", "gpt-5-mini").strip()
+def _model_agent(transcript: str, context: dict, memories: list[dict]) -> dict:
     safe_context = {
         "route": context.get("route"),
         "dataset": context.get("dataset"),
         "availableSections": context.get("availableSections", []),
     }
-    prompt = (
-        "You are Byizon, a concise voice-first analytics assistant. Use only the provided app context and never invent data. "
-        "Request UI actions only through tools. If evidence is unavailable, say so. Reply in the user's language, in 1-2 short sentences.\n"
-        f"APP_CONTEXT={json.dumps(safe_context, ensure_ascii=False)[:12000]}\n"
-        f"RELEVANT_MEMORY={json.dumps(memories, ensure_ascii=False)[:4000]}\n"
-        f"USER={transcript}"
-    )
-    payload = json.dumps({"model": model, "input": prompt, "tools": openai_tools()}).encode("utf-8")
-    request = urllib.request.Request(
-        "https://api.openai.com/v1/responses", data=payload,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=90) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:600]
-        raise ValueError(f"OpenAI agent request failed ({exc.code}): {detail}") from exc
-    calls, messages = [], []
-    for item in result.get("output", []):
-        if item.get("type") == "function_call":
-            calls.append({"name": item.get("name"), "arguments": json.loads(item.get("arguments") or "{}")})
-        if item.get("type") == "message":
-            for content in item.get("content", []):
-                if content.get("type") == "output_text":
-                    messages.append(content.get("text", ""))
-    return {"response": " ".join(messages).strip() or "Done.", "toolCalls": calls, "source": "openai"}
-
-
-def _huggingface_agent(transcript: str, context: dict, memories: list[dict]) -> dict:
-    key = _hf_key()
-    model = (os.getenv("HF_MODEL") or os.getenv("VITE_HF_MODEL") or "meta-llama/Llama-3.1-8B-Instruct").strip()
-    safe_context = {
-        "route": context.get("route"),
-        "dataset": context.get("dataset"),
-        "availableSections": context.get("availableSections", []),
+    evidence = {
+        "policy": "voice-context-evidence-only",
+        "queryPlan": {"intent": "voice_answer"},
+        "evidence": {
+            "appContext": safe_context,
+            "relevantMemory": memories[:6],
+            "userTranscript": transcript,
+        },
+        "security": {
+            "rawRowsIncluded": False,
+            "modelReceivesOnly": "route_dataset_summary_and_recent_voice_memory",
+        },
     }
-    messages = [
-        {"role": "system", "content": "You are Byizon, a concise analytics voice assistant. Answer only from APP_CONTEXT. Never invent numbers. If evidence is unavailable, say so. Reply in the user's language in at most two short sentences."},
-        {"role": "user", "content": f"APP_CONTEXT={json.dumps(safe_context, ensure_ascii=False)[:12000]}\nRELEVANT_MEMORY={json.dumps(memories, ensure_ascii=False)[:3000]}\nQUESTION={transcript}"},
-    ]
-    payload = json.dumps({"model": model, "messages": messages, "max_tokens": 350, "temperature": 0.1}).encode("utf-8")
-    request = urllib.request.Request(
-        "https://router.huggingface.co/v1/chat/completions", data=payload,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, method="POST",
+    response = orchestrate_text(
+        purpose="voice_answer",
+        evidence=evidence,
+        owner_user_id=str(context.get("workspaceUserId") or "voice"),
+        fallback="I can help with navigation and connected-app commands. Upload or connect data for grounded analysis.",
+        allow_model=True,
+        system_prompt=(
+            "You are Byizon, a concise voice-first analytics assistant. Use only the evidence JSON. "
+            "Never invent data. Reply in the user's language in at most two short sentences."
+        ),
     )
-    try:
-        with urllib.request.urlopen(request, timeout=90) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:600]
-        raise ValueError(f"Hugging Face request failed ({exc.code}): {detail}") from exc
-    content = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-    return {"response": content or "The model returned an empty response.", "toolCalls": [], "source": "huggingface"}
+    return {"response": response["text"], "toolCalls": [], "source": response.get("provider", "ai_orchestrator")}
 
 
 def answer(session_id: str, transcript: str, context: dict[str, Any]) -> dict:
@@ -128,10 +109,8 @@ def answer(session_id: str, transcript: str, context: dict[str, Any]) -> dict:
         raise ValueError("Transcript is required.")
     result = _local_command(transcript)
     if result is None:
-        if os.getenv("OPENAI_API_KEY", "").strip():
-            result = _openai_agent(transcript, context, MEMORY.search(session_id, transcript))
-        elif huggingface_configured():
-            result = _huggingface_agent(transcript, context, MEMORY.search(session_id, transcript))
+        if configured():
+            result = _model_agent(transcript, context, MEMORY.search(session_id, transcript))
         else:
             result = {"response": "I can navigate the app now. Configure a Hugging Face or OpenAI key for analytical voice answers.", "toolCalls": [], "source": "configuration"}
     MEMORY.add(session_id, transcript, result["response"])

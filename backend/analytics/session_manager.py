@@ -4,14 +4,14 @@ import time
 import uuid
 from typing import Any
 
-
-_SESSIONS: dict[str, dict[str, Any]] = {}
+from .dataset_store import delete_session, load_session, reassign_sessions, save_session
 
 
 def create_session(
     analysis: dict[str, Any],
     file_metadata: dict[str, Any] | None = None,
     owner_user_id: str | None = None,
+    dataset_id: str | None = None,
 ) -> dict[str, Any]:
     session_id = analysis.get("sessionId") or f"session_{uuid.uuid4().hex}"
     now = time.time()
@@ -27,21 +27,18 @@ def create_session(
         "analysis": analysis,
         "chatHistory": [],
         "analysisStatus": "complete",
-        "ownerUserId": owner_user_id,
+        "ownerUserId": owner_user_id or "anonymous",
+        "datasetId": dataset_id or analysis.get("datasetId"),
         "createdAt": now,
         "updatedAt": now,
     }
-    _SESSIONS[session_id] = session
-    return session
+    return save_session(session, session.get("datasetId"))
 
 
 def get_session(session_id: str | None, owner_user_id: str | None = None) -> dict[str, Any] | None:
     if not session_id:
         return None
-    session = _SESSIONS.get(session_id)
-    if session and owner_user_id and session.get("ownerUserId") != owner_user_id:
-        return None
-    return session
+    return load_session(session_id, owner_user_id)
 
 
 def append_chat(session_id: str, role: str, text: str, owner_user_id: str | None = None) -> None:
@@ -50,6 +47,7 @@ def append_chat(session_id: str, role: str, text: str, owner_user_id: str | None
         return
     session["chatHistory"].append({"role": role, "text": text, "timestamp": time.time()})
     session["updatedAt"] = time.time()
+    save_session(session, session.get("datasetId"))
 
 
 def clear_session(session_id: str | None, owner_user_id: str | None = None) -> bool:
@@ -57,19 +55,13 @@ def clear_session(session_id: str | None, owner_user_id: str | None = None) -> b
         return False
     if not get_session(session_id, owner_user_id):
         return False
-    return _SESSIONS.pop(session_id, None) is not None
+    return delete_session(session_id, owner_user_id)
 
 
 def reassign_owner(previous_owner_user_id: str, owner_user_id: str) -> int:
     if not previous_owner_user_id or previous_owner_user_id == owner_user_id:
         return 0
-    updated = 0
-    for session in _SESSIONS.values():
-        if session.get("ownerUserId") == previous_owner_user_id:
-            session["ownerUserId"] = owner_user_id
-            session["updatedAt"] = time.time()
-            updated += 1
-    return updated
+    return reassign_sessions(previous_owner_user_id, owner_user_id)
 
 
 def progress(session_id: str | None, owner_user_id: str | None = None) -> dict[str, Any]:

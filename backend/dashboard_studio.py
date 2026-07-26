@@ -7,7 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
-from urllib import error, request
+
+from .ai.orchestrator import configured as ai_configured, orchestrate_json
 
 ROOT = Path(__file__).resolve().parents[1]
 STITCH_BRIDGE = Path(__file__).with_name("stitch_bridge.mjs")
@@ -18,7 +19,7 @@ ALLOWED_LAYOUTS = {"grid", "story"}
 
 def studio_config() -> dict[str, Any]:
     return {
-        "huggingFaceConfigured": bool(_hf_key()),
+        "huggingFaceConfigured": ai_configured(),
         "stitchConfigured": bool(os.getenv("STITCH_API_KEY", "").strip()),
     }
 
@@ -73,8 +74,7 @@ def _deterministic_plan(prompt: str, analysis: dict[str, Any], current: dict[str
 
 
 def _hf_plan(prompt: str, analysis: dict[str, Any], current: dict[str, Any] | None) -> dict[str, Any] | None:
-    key = _hf_key()
-    if not key:
+    if not ai_configured():
         return None
     charts = [{"id": item.get("id"), "title": item.get("title"), "type": item.get("type")} for item in analysis.get("charts", [])[:30]]
     context = {
@@ -83,27 +83,30 @@ def _hf_plan(prompt: str, analysis: dict[str, Any], current: dict[str, Any] | No
         "charts": charts,
         "currentPlan": current or _default_plan(analysis),
     }
-    system = (
-        "Return one JSON object only. You customize a dashboard layout, never data values. "
-        "Allowed keys: title, subtitle, theme, density, layout, kpiLimit, chartIds, showInsights, accent. "
-        "theme is light|dark|contrast; density compact|comfortable; layout grid|story. "
-        "chartIds must only contain IDs supplied in context. kpiLimit is 1-8."
+    evidence = {
+        "policy": "dashboard-plan-evidence-only",
+        "queryPlan": {"intent": "dashboard_customization"},
+        "evidence": context,
+        "security": {
+            "datasetId": analysis.get("datasetId"),
+            "rawRowsIncluded": False,
+            "modelReceivesOnly": "kpi_values_chart_metadata_and_current_plan",
+        },
+    }
+    fallback = current or _default_plan(analysis)
+    plan = orchestrate_json(
+        purpose="dashboard_plan",
+        evidence=evidence,
+        owner_user_id=str(analysis.get("ownerUserId") or "studio"),
+        fallback=fallback,
+        allow_model=True,
+        system_prompt=(
+            "Customize a dashboard layout, never data values. Allowed keys: title, subtitle, theme, "
+            "density, layout, kpiLimit, chartIds, showInsights, accent. theme is light|dark|contrast; "
+            "density compact|comfortable; layout grid|story. chartIds must only contain IDs supplied."
+        ),
     )
-    payload = json.dumps({
-        "model": os.getenv("HF_MODEL") or os.getenv("VITE_HF_MODEL") or "meta-llama/Llama-3.1-8B-Instruct",
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": f"CONTEXT={json.dumps(context, ensure_ascii=False)}\nREQUEST={prompt}"}],
-        "max_tokens": 500,
-        "temperature": 0.1,
-    }).encode("utf-8")
-    req = request.Request("https://router.huggingface.co/v1/chat/completions", data=payload, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, method="POST")
-    try:
-        with request.urlopen(req, timeout=90) as response:
-            result = json.loads(response.read().decode("utf-8"))
-        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        return json.loads(match.group(0)) if match else None
-    except (error.URLError, ValueError, json.JSONDecodeError):
-        return None
+    return plan
 
 
 def _sanitize_plan(candidate: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any]:

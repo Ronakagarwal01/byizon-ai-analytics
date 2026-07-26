@@ -24,25 +24,50 @@ const PROVIDER_DOMAINS = {
   slack: 'slack.com',
   jira: 'atlassian.com',
 };
+const PROVIDER_MARKS = {
+  'microsoft-365': 'M',
+  salesforce: 'S',
+  'google-workspace': 'G',
+  glean: 'Gl',
+  zapier: 'Z',
+  workato: 'W',
+  hubspot: 'H',
+  slack: '#',
+  jira: 'J',
+};
 
 export function ProviderLogo({ connector }) {
   const [sourceIndex, setSourceIndex] = useState(0);
+  const [loaded, setLoaded] = useState(false);
   const slug = LOGO_SLUGS[connector.id];
   const domain = PROVIDER_DOMAINS[connector.id];
   const sources = [
     slug ? `https://cdn.simpleicons.org/${slug}` : null,
     domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=128` : null,
   ].filter(Boolean);
-  if (!sources[sourceIndex]) {
-    return <span className="quick-provider-fallback">{connector.name.slice(0, 2).toUpperCase()}</span>;
-  }
+
+  useEffect(() => {
+    setSourceIndex(0);
+    setLoaded(false);
+  }, [connector.id]);
+
   return (
-    <span className="quick-provider-logo">
-      <img
-        src={sources[sourceIndex]}
-        alt={`${connector.name} logo`}
-        onError={() => setSourceIndex(index => index + 1)}
-      />
+    <span className={`quick-provider-logo provider-${connector.id}`}>
+      <span className="quick-provider-monogram" aria-hidden="true">
+        {PROVIDER_MARKS[connector.id] || connector.name.slice(0, 2).toUpperCase()}
+      </span>
+      {sources[sourceIndex] && (
+        <img
+          className={loaded ? 'loaded' : ''}
+          src={sources[sourceIndex]}
+          alt={`${connector.name} logo`}
+          onLoad={() => setLoaded(true)}
+          onError={() => {
+            setLoaded(false);
+            setSourceIndex(index => index + 1);
+          }}
+        />
+      )}
     </span>
   );
 }

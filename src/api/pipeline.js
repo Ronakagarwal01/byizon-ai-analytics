@@ -19,7 +19,7 @@ import { buildSchemaPayload } from './stages/schemaBuilder';
 import { runAISchemaAgent } from './stages/aiSchemaAgent';
 import { runValidationAgent } from './stages/validationAgent';
 import { runAnalyticsEngine } from './analyticsEngine';
-import { analyzeFileWithBackend, isLegacyBrowserFile, isUniversalBackendFile } from './universalBackend';
+import { analyzeFileWithBackend, isUniversalBackendFile } from './universalBackend';
 
 export const PIPELINE_STAGES = [
   { id: 'validator',  label: 'Uploading file',              icon: 'Shield' },
@@ -72,11 +72,8 @@ export async function runPipeline(file, onStageUpdate) {
       tick('analytics', 'done', `${result.kpis?.length || 0} KPIs - ${result.charts?.length || 0} charts - ${result.anomalies?.length || 0} anomalies`);
       return result;
     } catch (err) {
-      if (!isLegacyBrowserFile(file.name)) {
-        tick('analytics', 'error', err.message);
-        throw new Error(`${err.message} Start the Python backend with: npm run backend`, { cause: err });
-      }
-      tick('parser', 'running', `Python backend unavailable (${err.message}). Falling back to browser parser...`);
+      tick('analytics', 'error', err.message);
+      throw new Error(err.message, { cause: err });
     }
   }
 

@@ -52,6 +52,15 @@ def _database() -> sqlite3.Connection:
         )
         """
     )
+    database.execute(
+        """
+        CREATE TABLE IF NOT EXISTS owner_aliases (
+            alias_owner_id TEXT PRIMARY KEY,
+            canonical_owner_id TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
     database.commit()
     return database
 
@@ -108,4 +117,35 @@ def save_connection(connection: dict[str, Any], token: dict[str, Any] | None = N
 def delete_connection(connection_id: str) -> None:
     with _database() as database:
         database.execute("DELETE FROM connections WHERE connection_id = ?", (connection_id,))
+        database.commit()
+
+
+def load_owner_aliases() -> dict[str, str]:
+    with _database() as database:
+        rows = database.execute(
+            "SELECT alias_owner_id, canonical_owner_id FROM owner_aliases"
+        ).fetchall()
+    return {
+        str(alias_owner_id): str(canonical_owner_id)
+        for alias_owner_id, canonical_owner_id in rows
+        if alias_owner_id and canonical_owner_id
+    }
+
+
+def save_owner_alias(alias_owner_id: str, canonical_owner_id: str) -> None:
+    alias = str(alias_owner_id or "").strip()
+    canonical = str(canonical_owner_id or "").strip()
+    if not alias or not canonical or alias == canonical:
+        return
+    with _database() as database:
+        database.execute(
+            """
+            INSERT INTO owner_aliases (alias_owner_id, canonical_owner_id, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(alias_owner_id) DO UPDATE SET
+                canonical_owner_id = excluded.canonical_owner_id,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (alias, canonical),
+        )
         database.commit()

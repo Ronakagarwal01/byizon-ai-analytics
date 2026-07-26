@@ -11,6 +11,11 @@ TOOLS = [
     ("open_reports", "Open the generated analysis report.", {}),
     ("open_connections", "Open business data connections.", {}),
     ("create_protected_share", "Create a password-protected live link for the currently uploaded dataset.", {}),
+    (
+        "run_connected_command",
+        "Run a Gmail, Google Calendar, Google Meet, Google Docs, or Google Sheets command through the authorized account.",
+        {"command": {"type": "string"}},
+    ),
 ]
 
 

@@ -1,4 +1,4 @@
-import { createProtectedShare } from '../api/universalBackend';
+import { askBackendChat, createProtectedShare } from '../api/universalBackend';
 
 const PAGE_PATHS = {
   home: '/', upload: '/upload', dashboard: '/dashboard', chat: '/chat', reports: '/reports', connections: '/connections',
@@ -24,6 +24,19 @@ export async function executeVoiceTools(toolCalls, navigate, context = {}) {
           ok: true,
           share: { ...share, link: `${window.location.origin}/report/${share.shareId}` },
         });
+        continue;
+      }
+      case 'run_connected_command': {
+        const command = String(args.command || '').trim();
+        if (!command) throw new Error('Connected app command is empty.');
+        window.dispatchEvent(new CustomEvent('byizon:operation', {
+          detail: { title: 'Running connected app command', status: 'running' },
+        }));
+        const response = await askBackendChat(command, context.analysis || null, []);
+        if (response.task) {
+          window.dispatchEvent(new CustomEvent('byizon:operation', { detail: response.task }));
+        }
+        results.push({ name: call.name, ok: true, response });
         continue;
       }
       case 'go_back': window.history.back(); break;

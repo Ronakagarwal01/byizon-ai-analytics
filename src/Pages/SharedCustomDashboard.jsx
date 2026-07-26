@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { getProtectedShareMetadata, unlockProtectedShare } from '../api/universalBackend';
+import { enhanceStitchHtml } from '../utils/stitchPreview';
 
 export default function SharedCustomDashboard() {
   const { reportId } = useParams();
@@ -69,7 +70,7 @@ export default function SharedCustomDashboard() {
     <main className="custom-shared-dashboard">
       <header><div><ShieldCheck size={16} /><strong>Protected Customized Dashboard</strong></div><span>{analysis.fileName}</span></header>
       {customization?.html ? (
-        <iframe title="Shared customized dashboard" sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={customization.html} />
+        <iframe title="Shared customized dashboard" sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={enhanceStitchHtml(customization.html)} />
       ) : customization?.imageUrl ? (
         <img src={customization.imageUrl} alt="Shared customized dashboard" />
       ) : (

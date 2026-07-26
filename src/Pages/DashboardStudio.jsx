@@ -1,20 +1,30 @@
 import { useEffect, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, CheckCircle2, Clock3, ExternalLink, Globe2, History, Loader2,
+  Activity, ArrowLeft, CheckCircle2, Clock3, ExternalLink, Globe2, History, Loader2,
   LockKeyhole, Palette, RotateCcw, Send, Share2, ShieldCheck, Sparkles, Trash2, X,
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import SecureExportDialog from '../components/SecureExportDialog';
 import {
-  generateDashboardPlan, getDashboardStudioConfig, getProtectedShareData,
+  generateDashboardPlan, getAutomationActivities, getDashboardStudioConfig, getProtectedShareData,
 } from '../api/universalBackend';
 import { clearDashboardHistory, loadDashboardHistory, saveDashboardVersion } from '../utils/dashboardHistory';
+import { enhanceStitchHtml } from '../utils/stitchPreview';
 
 const SUGGESTIONS = [
   'Create a clean executive dashboard with the most important KPIs and charts',
   'Use a dark professional theme and organize the analysis as a visual story',
   'Make the dashboard compact, highlight risks, and prioritize actionable insights',
+];
+
+const BUILD_STAGES = [
+  'Understanding your dashboard prompt',
+  'Reading grounded KPIs and chart data',
+  'Planning the responsive page structure',
+  'Generating dashboard components',
+  'Wiring navigation and interactions',
+  'Validating the final preview',
 ];
 
 function initialPlan(analysis) {
@@ -50,11 +60,13 @@ export default function DashboardStudio() {
   const [stitchResult, setStitchResult] = useState(null);
   const [loading, setLoading] = useState(Boolean(reportId));
   const [generating, setGenerating] = useState(false);
+  const [buildStage, setBuildStage] = useState(0);
   const [shareOpen, setShareOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState('');
+  const [activities, setActivities] = useState([]);
 
   useEffect(() => {
     let active = true;
@@ -72,6 +84,19 @@ export default function DashboardStudio() {
     };
     loadConfig();
     return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const loadActivities = () => getAutomationActivities(8)
+      .then(items => active && setActivities(items))
+      .catch(() => {});
+    loadActivities();
+    const timer = window.setInterval(loadActivities, 10000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -117,6 +142,15 @@ export default function DashboardStudio() {
     // A dataset change should load its own saved versions only once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetKey]);
+
+  useEffect(() => {
+    if (!generating) return undefined;
+    setBuildStage(0);
+    const timer = window.setInterval(() => {
+      setBuildStage(current => Math.min(BUILD_STAGES.length - 1, current + 1));
+    }, 7000);
+    return () => window.clearInterval(timer);
+  }, [generating]);
 
   const generateWithStitch = async (event) => {
     event?.preventDefault();
@@ -173,7 +207,7 @@ export default function DashboardStudio() {
       if (stitchResult?.htmlUrl) window.open(stitchResult.htmlUrl, '_blank', 'noopener,noreferrer');
       return;
     }
-    const url = URL.createObjectURL(new Blob([stitchResult.html], { type: 'text/html;charset=utf-8' }));
+    const url = URL.createObjectURL(new Blob([enhanceStitchHtml(stitchResult.html)], { type: 'text/html;charset=utf-8' }));
     window.open(url, '_blank', 'noopener,noreferrer');
     window.setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
@@ -231,8 +265,55 @@ export default function DashboardStudio() {
         {error && <p className="studio-error">{error}</p>}
       </section>
 
+      {activities.length > 0 && (
+        <section className="studio-activity-panel" aria-labelledby="studio-activity-title">
+          <div className="studio-activity-heading">
+            <div><Activity size={17} /><span><strong id="studio-activity-title">Connected workflow activity</strong><small>Live actions completed by chat and voice</small></span></div>
+            <em>{activities.length} recent</em>
+          </div>
+          <div className="studio-activity-list">
+            {activities.slice(0, 6).map(activity => (
+              <article key={activity.activityId}>
+                <span className="studio-activity-state"><CheckCircle2 size={15} /></span>
+                <div>
+                  <strong>{activity.title}</strong>
+                  <small>{activity.message}</small>
+                </div>
+                <time>{new Date(activity.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</time>
+                {activity.url && <a href={activity.url} target="_blank" rel="noreferrer" aria-label={`Open ${activity.title}`}><ExternalLink size={14} /></a>}
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       <main className="stitch-dashboard-stage">
-        {hasDashboard ? (
+        {generating ? (
+          <div className="stitch-live-build" aria-live="polite">
+            <div className="stitch-build-preview">
+              <div className="stitch-build-sidebar">
+                <i /><i /><i /><i /><i />
+              </div>
+              <div className="stitch-build-canvas">
+                <div className="stitch-build-header" />
+                <div className="stitch-build-kpis"><i /><i /><i /><i /></div>
+                <div className="stitch-build-charts"><i /><i /></div>
+              </div>
+            </div>
+            <div className="stitch-build-progress">
+              <div><Sparkles size={18} /><span><strong>Building your live dashboard</strong><small>{BUILD_STAGES[buildStage]}</small></span></div>
+              <div className="stitch-build-progress-track"><i style={{ width: `${((buildStage + 1) / BUILD_STAGES.length) * 100}%` }} /></div>
+              <ol>
+                {BUILD_STAGES.map((stage, index) => (
+                  <li key={stage} className={index < buildStage ? 'complete' : index === buildStage ? 'active' : ''}>
+                    {index < buildStage ? <CheckCircle2 size={14} /> : index === buildStage ? <Loader2 size={14} className="spin" /> : <Clock3 size={14} />}
+                    {stage}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        ) : hasDashboard ? (
           <>
             <div className="stitch-stage-toolbar">
               <div><Globe2 size={17} /><strong>Stitch Preview</strong><span>{analysis.fileName}</span></div>
@@ -247,7 +328,7 @@ export default function DashboardStudio() {
                 title="Customized Stitch dashboard"
                 sandbox="allow-scripts"
                 referrerPolicy="no-referrer"
-                srcDoc={stitchResult.html}
+                srcDoc={enhanceStitchHtml(stitchResult.html)}
               />
             ) : stitchResult.imageUrl ? (
               <img className="stitch-dashboard-image" src={stitchResult.imageUrl} alt="Customized Stitch dashboard preview" />

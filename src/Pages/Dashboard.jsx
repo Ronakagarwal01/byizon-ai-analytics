@@ -249,6 +249,14 @@ export default function Dashboard() {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [secureDialogMode, setSecureDialogMode] = useState(null);
   const rowsPerPage = 10;
+  const analyticsDataset = uploadedData?.analyticsDataset || null;
+  const dashboardDataset = analyticsDataset?.dashboard || {};
+  const analyticsSourceLocked = Boolean(analyticsDataset);
+  const dashboardRows = dashboardDataset.rows || uploadedData?.rows || [];
+  const dashboardColumns = dashboardDataset.columns || uploadedData?.columns || [];
+  const dashboardCharts = dashboardDataset.charts || uploadedData?.charts || [];
+  const dashboardQuality = dashboardDataset.dataQuality || uploadedData?.dataQuality || { completeness: 0, quality: 0 };
+  const analyticsDashboardPlan = dashboardDataset.dashboardPlan || uploadedData?.dashboardPlan || uploadedData?.dashboard_plan || {};
 
   // Collapsed states for Drill Down view
   const [expandedCategories, setExpandedCategories] = useState({});
@@ -282,7 +290,7 @@ export default function Dashboard() {
   const validationWarnings = useMemo(() => {
     if (!uploadedData) return [];
     const warnings = [];
-    const dataQuality = uploadedData.dataQuality || { completeness: 100, quality: 100, duplicatesCount: 0 };
+    const dataQuality = dashboardQuality || { completeness: 100, quality: 100, duplicatesCount: 0 };
     const anomalies = uploadedData.anomalies || [];
     const rowCount = uploadedData.rowCount || 1;
 
@@ -302,7 +310,7 @@ export default function Dashboard() {
     }
 
     return warnings;
-  }, [uploadedData]);
+  }, [uploadedData, dashboardQuality]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -327,7 +335,7 @@ export default function Dashboard() {
     if (!filteredRows || filteredRows.length === 0) return;
     setShowExportMenu(false);
     
-    const headers = uploadedData.columns;
+    const headers = dashboardColumns;
     const csvContent = [
       headers.join(','),
       ...filteredRows.map(row => 
@@ -406,8 +414,8 @@ export default function Dashboard() {
 
   // Compute filtered rows (includes search query match)
   const filteredRows = useMemo(() => {
-    if (!uploadedData || !uploadedData.rows) return [];
-    return uploadedData.rows.filter(row => {
+    if (!uploadedData || !dashboardRows.length) return [];
+    return dashboardRows.filter(row => {
       // 1. Matches filter select inputs
       const matchFilters = Object.entries(activeFilters).every(([col, val]) => {
         if (!val || val === '') return true;
@@ -421,16 +429,18 @@ export default function Dashboard() {
 
       return matchFilters && matchSearch;
     });
-  }, [uploadedData, activeFilters, searchQuery]);
+  }, [uploadedData, dashboardRows, activeFilters, searchQuery]);
 
-  // Recompute KPIs for the filtered row subset using the Analytics Engine
+  // Metrics remain locked to the backend analytics dataset. Legacy browser-only
+  // uploads can still use the old local recompute path for backward compatibility.
   const filteredKPIs = useMemo(() => {
+    if (analyticsSourceLocked) return dashboardDataset.kpis || uploadedData?.kpis || [];
     if (!uploadedData || !uploadedData._kpiList) return uploadedData?.kpis || [];
     return recomputeFilteredKPIs(filteredRows, uploadedData);
-  }, [uploadedData, filteredRows]);
+  }, [analyticsSourceLocked, dashboardDataset.kpis, uploadedData, filteredRows]);
 
   const activeKPIs = filteredKPIs;
-  const dashboardPlan = uploadedData?.dashboardPlan || uploadedData?.dashboard_plan || {};
+  const dashboardPlan = analyticsDashboardPlan;
   const plannedSections = dashboardPlan.main_story_sections || [];
   const plannedInsights = dashboardPlan.insights || [];
   const skippedColumns = dashboardPlan.skipped_columns || [];
@@ -439,7 +449,7 @@ export default function Dashboard() {
     () => uploadedData?.columnRoles || uploadedData?.mappedCols || {},
     [uploadedData?.columnRoles, uploadedData?.mappedCols]
   );
-  const dataQuality = uploadedData?.dataQuality || { completeness: 0, quality: 0 };
+  const dataQuality = dashboardQuality;
   const allAnomalies = useMemo(() => uploadedData?.anomalies || [], [uploadedData?.anomalies]);
   const actionableAnomalies = useMemo(
     () => allAnomalies.filter(a => getAnomalySeverity(a) !== 'Info'),
@@ -959,15 +969,15 @@ export default function Dashboard() {
             )}
 
             {/* Planner-selected dashboard charts */}
-            {(uploadedData.charts || []).length > 0 && (
+            {(dashboardCharts || []).length > 0 && (
               <div className="chart-grid">
-                {(uploadedData.charts || []).slice(0, 4).map((chart, chartIndex) => (
+                {(dashboardCharts || []).slice(0, 4).map((chart, chartIndex) => (
                   <UniversalChart key={chart.id || chart.title || chartIndex} chart={chart} index={chartIndex} />
                 ))}
               </div>
             )}
 
-            {(uploadedData.charts || []).length === 0 && (
+            {(dashboardCharts || []).length === 0 && (
               <div className="chart-card" style={{ padding: 28, marginBottom: 24, color: 'var(--text-secondary)', textAlign: 'center' }}>
                 No meaningful dashboard chart was selected because the dataset does not contain enough valid measures, dimensions, targets, or time columns.
               </div>
@@ -988,19 +998,19 @@ export default function Dashboard() {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      {(uploadedData.columns || []).slice(0, 7).map(c => <th key={c}>{c}</th>)}
-                      {(uploadedData.columns || []).length > 7 && <th>+{(uploadedData.columns || []).length - 7} more</th>}
+                      {(dashboardColumns || []).slice(0, 7).map(c => <th key={c}>{c}</th>)}
+                      {(dashboardColumns || []).length > 7 && <th>+{(dashboardColumns || []).length - 7} more</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {paginatedRows.map((row, i) => (
                       <tr key={i}>
-                        {(uploadedData.columns || []).slice(0, 7).map((c, j) => (
+                        {(dashboardColumns || []).slice(0, 7).map((c, j) => (
                           <td key={c} style={j === 0 ? { fontWeight: 600, color: 'var(--text-primary)' } : {}}>
                             {String(row[c] ?? 'â€”').slice(0, 24)}
                           </td>
                         ))}
-                        {uploadedData.columns.length > 7 && <td style={{ color: 'var(--text-muted)' }}>â€¦</td>}
+                        {dashboardColumns.length > 7 && <td style={{ color: 'var(--text-muted)' }}>â€¦</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -1036,7 +1046,7 @@ export default function Dashboard() {
         {/* â”€â”€ TAB CONTENT: VISUAL INSIGHTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {activeTab === 'visuals' && (
           <div className="animate-fadeIn">
-            {(uploadedData.charts || []).length === 0 && dataSciencePlots.length === 0 ? (
+            {(dashboardCharts || []).length === 0 && dataSciencePlots.length === 0 ? (
               <div className="chart-card" style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
                 No statistically supported charts were generated for this dataset.
               </div>
@@ -1052,7 +1062,7 @@ export default function Dashboard() {
                   </p>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 20 }}>
-                  {(uploadedData.charts || []).map((chart, chartIndex) => (
+                  {(dashboardCharts || []).map((chart, chartIndex) => (
                     <UniversalChart key={chart.id || chart.title || chartIndex} chart={chart} index={chartIndex} />
                   ))}
                 </div>
@@ -1244,14 +1254,14 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {(uploadedData.charts || []).length > 0 && (
+                {(dashboardCharts || []).length > 0 && (
                   <div className="animate-fadeInUp" style={{ marginTop: 24 }}>
                     <div className="report-section-title" style={{ marginBottom: 16 }}>
                       <Activity size={18} color="var(--blue-400)" />
                       Auto-generated Charts
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 20 }}>
-                      {(uploadedData.charts || []).slice(0, 8).map((chart, chartIndex) => (
+                      {(dashboardCharts || []).slice(0, 8).map((chart, chartIndex) => (
                         <UniversalChart key={chart.id || chart.title || chartIndex} chart={chart} index={chartIndex} />
                       ))}
                     </div>
@@ -1435,7 +1445,7 @@ export default function Dashboard() {
                                               <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
                                                 <thead>
                                                   <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                                                    {(uploadedData.columns || []).slice(0, 5).map(h => (
+                                                    {(dashboardColumns || []).slice(0, 5).map(h => (
                                                       <th key={h} style={{ textAlign: 'left', padding: '4px 8px' }}>{h}</th>
                                                     ))}
                                                   </tr>
@@ -1443,7 +1453,7 @@ export default function Dashboard() {
                                                 <tbody>
                                                   {cust.rows.map((r, i) => (
                                                     <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                                                      {(uploadedData.columns || []).slice(0, 5).map(h => (
+                                                      {(dashboardColumns || []).slice(0, 5).map(h => (
                                                         <td key={h} style={{ padding: '4px 8px' }}>{String(r[h] ?? '')}</td>
                                                       ))}
                                                     </tr>
@@ -1573,7 +1583,7 @@ export default function Dashboard() {
               <div>
                 <div className="debug-box-title">Data Profiler Metrics</div>
                 <div className="debug-box">
-                  {JSON.stringify(uploadedData.dataQuality || {}, null, 2)}
+                  {JSON.stringify(dataQuality || {}, null, 2)}
                 </div>
               </div>
               <div>
@@ -1585,8 +1595,9 @@ export default function Dashboard() {
                     confidence: uploadedData.detectionConfidence,
                     modelUsed: uploadedData.model,
                     pipelineMs: uploadedData.pipelineRunMs,
-                    totalKPIs: uploadedData.kpis?.length,
-                    totalCharts: uploadedData.charts?.length
+                    analyticsDatasetId: analyticsDataset?.analyticsDatasetId,
+                    totalKPIs: activeKPIs?.length,
+                    totalCharts: dashboardCharts?.length
                   }, null, 2)}
                 </div>
               </div>

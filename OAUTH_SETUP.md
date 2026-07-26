@@ -35,15 +35,36 @@ Create an OAuth web client in Google Cloud, configure the consent screen, and ad
 - Google Calendar API
 - Google Docs API
 
-The user sees Google's official account chooser and consent screen. After approval, Byizon can:
+The user sees Google's official account chooser and consent screen once. Byizon
+requests the configured Workspace permissions together so Drive, Sheets, Gmail,
+Calendar/Meet, and Docs can use the same authorized Google account.
+
+Available permission groups:
+
+- Google Drive: browse supported Drive files.
+- Google Sheets: browse, create, and update spreadsheets.
+- Gmail: read authorized message metadata and send email.
+- Google Calendar: read calendars and create events.
+- Google Meet: create a Meet conference through Calendar and invite attendees.
+- Google Docs: create documents from the current calculated report.
+
+After approval, Byizon can:
 
 - Browse and analyze Sheets, Docs, supported Drive files, Gmail metadata, and Calendar events.
 - Send a Gmail message when the chatbot command includes a recipient.
 - Create Calendar events when the command includes an exact `YYYY-MM-DD HH:MM` value.
+- Create Google Meet links and email Calendar invitations to supplied attendees.
 - Create Google Docs from the current calculated report.
 - Append calculated KPIs to a selected or newly created Google Sheet.
 
-Existing Google connections must be reconnected once after enabling these write scopes.
+Meet creation uses the Google Calendar API; a separate Google Meet API credential
+is not required for this workflow. Existing Google connections created with
+partial scopes must reconnect once to approve the combined permission set.
+
+Authorization and task execution remain separate. One sign-in makes the Google
+services available, but each manual/chat/voice task must identify Gmail, Sheets,
+Calendar, Meet, or Docs. If a command such as `current report save karo` is
+ambiguous, Byizon displays service choices instead of guessing.
 
 #### Public multi-user Google access
 
@@ -106,6 +127,51 @@ For outgoing notifications, enable Incoming Webhooks, add a webhook to a channel
 
 Create an Atlassian OAuth 2.0 (3LO) app, add the Jira callback URL, and grant `read:jira-work`, `read:jira-user`, and `offline_access`. Put the Client ID and Client Secret in `.env`. Each user can then authorize their own Jira Cloud site and browse/analyze projects without sharing an Atlassian password with Byizon.
 
+## Other connector setup (excluding HubSpot)
+
+### Salesforce CRM
+
+1. In Salesforce Setup, create an External Client App or Connected App.
+2. Enable OAuth and add:
+   `https://YOUR-DOMAIN/api/oauth/callback/salesforce`
+3. Grant `api`, `refresh_token`, and `id`.
+4. Put the Consumer Key in `SALESFORCE_CLIENT_ID` and Consumer Secret in
+   `SALESFORCE_CLIENT_SECRET`.
+5. Each Byizon user then signs in to their own Salesforce account and grants
+   access. Provider passwords are never entered in Byizon.
+
+### Microsoft 365
+
+1. In Microsoft Entra admin center, register a Web application.
+2. Add:
+   `https://YOUR-DOMAIN/api/oauth/callback/microsoft-365`
+3. Add delegated permissions `User.Read` and `Files.Read`.
+4. Create a client secret and save the Application (client) ID and secret as
+   `MICROSOFT_365_CLIENT_ID` and `MICROSOFT_365_CLIENT_SECRET`.
+
+### Slack
+
+1. Create a Slack app and configure the deployed callback:
+   `https://YOUR-DOMAIN/api/oauth/callback/slack`
+2. Add the bot scopes listed in the Slack section above.
+3. Save the app Client ID and Client Secret as `SLACK_CLIENT_ID` and
+   `SLACK_CLIENT_SECRET`.
+4. Reinstall the app after changing scopes, then invite the app to private
+   channels whose files should be available.
+
+### Jira Cloud
+
+1. Create an Atlassian OAuth 2.0 (3LO) integration.
+2. Add:
+   `https://YOUR-DOMAIN/api/oauth/callback/jira`
+3. Grant `read:jira-work`, `read:jira-user`, and `offline_access`.
+4. Save the credentials as `JIRA_CLIENT_ID` and `JIRA_CLIENT_SECRET`.
+
+Glean, Zapier, and Workato remain organization-specific because their OAuth
+endpoints and approved scopes depend on the customer's enterprise tenant. Their
+catalog entries should not be presented as fully operational until those tenant
+values and resource APIs are configured.
+
 ## Required `.env` values
 
 ```dotenv
@@ -139,11 +205,17 @@ Slack ke #management channel me current report bhejo
 Gmail se manager@example.com ko current report bhejo
 Google Doc banao title: July Analysis
 Calendar event create karo title: Review on 2026-07-20 15:30 for 45 minutes
+Google Meet link banao title: Review on 2026-07-20 15:30 aur manager@example.com ko bhejo
 Current report Google Sheet "Monthly Review" me save karo
 Current report ke liye create new Google Sheet
 ```
 
 Write actions run only against the account authorized by the current Byizon user. If a required recipient, date/time, or resource name is missing, the chatbot asks for it instead of guessing.
+
+The UI shows command-understanding, permission-check, provider-request, and
+completion states. Completed Gmail, Calendar, Meet, Docs, and Sheets actions are
+also recorded in the Customized Dashboard activity panel for the current
+workspace only.
 
 ## Production requirements
 

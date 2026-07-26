@@ -127,10 +127,14 @@ export default function GlobalVoiceAssistant() {
     setMessage(clean);
     const result = await runVoiceAgent(uploadedData?.sessionId || 'browser-session', clean, appContext(location, uploadedData));
     if (!sessionActiveRef.current) return;
-    const toolResults = await executeVoiceTools(result.toolCalls, navigate, { sessionId: uploadedData?.sessionId });
+    const toolResults = await executeVoiceTools(result.toolCalls, navigate, {
+      sessionId: uploadedData?.sessionId,
+      analysis: uploadedData,
+    });
     const createdShare = toolResults.find(item => item.share)?.share;
+    const connectedResponse = toolResults.find(item => item.response)?.response;
     if (createdShare) setShareResult(createdShare);
-    await speak(result.response);
+    await speak(connectedResponse?.answer || result.response);
   };
 
   const handleError = (error) => {

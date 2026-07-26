@@ -11,6 +11,8 @@ import Connections  from "./Pages/Connections";
 import Home         from "./Pages/Home";
 import DashboardStudio from "./Pages/DashboardStudio";
 import SharedCustomDashboard from "./Pages/SharedCustomDashboard";
+import Meetings from "./Pages/Meetings";
+import CalendarPage from "./Pages/CalendarPage";
 import GlobalVoiceAssistant from "./voice/GlobalVoiceAssistant";
 
 function App() {
@@ -26,6 +28,8 @@ function App() {
           <Route path="/chat"          element={<Chat />}         />
           <Route path="/reports"       element={<Reports />}      />
           <Route path="/connections"   element={<Connections />}  />
+          <Route path="/meetings"      element={<Meetings />}     />
+          <Route path="/calendar"      element={<CalendarPage />} />
           <Route path="/studio"        element={<DashboardStudio />} />
           <Route path="/studio/:reportId" element={<DashboardStudio />} />
           <Route path="/custom-dashboard/:reportId" element={<SharedCustomDashboard />} />

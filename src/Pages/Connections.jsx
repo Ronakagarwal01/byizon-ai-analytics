@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowRight, CheckCircle2, Cloud, Database, ExternalLink, Link2,
-  FileSpreadsheet, Loader2, LockKeyhole, PlugZap, RefreshCw, Search, ShieldCheck, Trash2, X,
+  ArrowRight, CalendarDays, CheckCircle2, Cloud, Database, ExternalLink, FileText, Link2,
+  FileSpreadsheet, Loader2, LockKeyhole, Mail, PlugZap, RefreshCw, Search, ShieldCheck,
+  Sheet, Trash2, Video, X,
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import {
@@ -25,6 +26,15 @@ const FALLBACK_CONNECTORS = [
   id, name, category, accent, authModes: ['oauth', 'url'], capabilities: [], oauthReady: false,
   description: 'Connect this business source to the unified analytics workspace.',
 }));
+
+const GOOGLE_PERMISSION_ICONS = {
+  drive: Database,
+  sheets: Sheet,
+  gmail: Mail,
+  calendar: CalendarDays,
+  meet: Video,
+  docs: FileText,
+};
 
 function ConnectorMark({ connector, size = 44 }) {
   return (
@@ -57,6 +67,8 @@ export default function Connections() {
   const [loadingResources, setLoadingResources] = useState(false);
   const [analyzingResource, setAnalyzingResource] = useState('');
   const [testingSlack, setTestingSlack] = useState(false);
+  const [resourceFilter, setResourceFilter] = useState('all');
+  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
 
   const load = async (suppressLegacyNotice = false) => {
     setLoading(true);
@@ -111,6 +123,21 @@ export default function Connections() {
     setError('');
   };
 
+  useEffect(() => {
+    if (deepLinkHandled || !catalog.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const source = params.get('source');
+    const filter = params.get('filter');
+    if (!source && !filter) return;
+    if (filter && categories.includes(filter)) setCategory(filter);
+    if (source) {
+      const requested = catalog.find(item => item.id === source);
+      if (requested) openConnector(requested);
+    }
+    setDeepLinkHandled(true);
+    window.history.replaceState({}, '', '/connections');
+  }, [catalog, categories, deepLinkHandled]);
+
   const closeDialog = () => {
     if (saving) return;
     setSelected(null);
@@ -127,7 +154,11 @@ export default function Connections() {
         if (!selected.oauthReady) {
           throw new Error(`${selected.name} OAuth app credentials are not configured yet. Add its Client ID and Client Secret to the backend environment first.`);
         }
-        window.location.assign(oauthStartUrl(selected.id));
+        window.location.assign(oauthStartUrl(
+          selected.id,
+          '/connections',
+          selected.id === 'google-workspace' ? 'all' : '',
+        ));
         return;
       }
       const connection = await connectBusinessTool({
@@ -147,6 +178,7 @@ export default function Connections() {
   const browseConnection = async (connection) => {
     setResourceConnection(connection);
     setResources([]);
+    setResourceFilter('all');
     setLoadingResources(true);
     setError('');
     try {
@@ -200,6 +232,18 @@ export default function Connections() {
     }
   };
 
+  const googleResourceFilters = [
+    { id: 'all', label: 'All sources' },
+    { id: 'drive', label: 'Drive & Docs', types: ['google_drive_file', 'google_doc'] },
+    { id: 'sheets', label: 'Google Sheets', types: ['google_sheet'] },
+    { id: 'gmail', label: 'Gmail', types: ['gmail_messages'] },
+    { id: 'calendar', label: 'Calendar', types: ['google_calendar_events'] },
+  ];
+  const selectedResourceFilter = googleResourceFilters.find(item => item.id === resourceFilter);
+  const visibleResources = selectedResourceFilter?.types
+    ? resources.filter(item => selectedResourceFilter.types.includes(item.type) || item.type === 'permission_error')
+    : resources;
+
   return (
     <div className="app-layout">
       <Sidebar />
@@ -251,6 +295,15 @@ export default function Connections() {
                       {ready ? <CheckCircle2 size={14} /> : <LockKeyhole size={14} />}
                       {ready ? 'Connected' : connection.requiresReconnect ? 'Permission update required' : 'Authorization required'}
                     </span>
+                    {connection.connectorId === 'google-workspace' && (
+                      <div className="google-permission-summary" aria-label="Google permissions">
+                        {(connection.permissions || []).map(permission => (
+                          <span key={permission.id} className={permission.granted ? 'granted' : ''}>
+                            {permission.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {ready && (
                       <button className="connection-browse-button" onClick={() => browseConnection(connection)}>
                         <Database size={15} /> Browse data
@@ -320,7 +373,20 @@ export default function Connections() {
                   <h3>{connector.name}</h3>
                   <p>{connector.description}</p>
                   <div className="connector-capabilities">
-                    {(connector.capabilities || []).slice(0, 4).map(item => <span key={item}>{item}</span>)}
+                    {(connector.capabilities || []).map(item => (
+                      connector.id === 'google-workspace'
+                        ? (
+                          <button
+                            type="button"
+                            key={item}
+                            onClick={() => openConnector(connector)}
+                            title={`Connect ${item} with your Google account`}
+                          >
+                            {item}
+                          </button>
+                        )
+                        : <span key={item}>{item}</span>
+                    ))}
                   </div>
                   <button className="connector-action" onClick={() => openConnector(connector)}>
                     Connect <ArrowRight size={15} />
@@ -383,26 +449,51 @@ export default function Connections() {
                   <small>Use a share link, published data endpoint, or authorized webhook URL.</small>
                 </label>
               ) : (
-                <div className="oauth-explanation">
-                  <ExternalLink size={18} />
-                  <div>
-                    <strong>Provider authorization</strong>
-                    <span>
-                      {selected.oauthReady
-                        ? selected.id === 'google-workspace'
-                          ? 'Google will show its official account chooser. Select your existing account, review Sheets, Gmail, Calendar, Drive, and Docs permissions, then click Continue. Byizon never receives your password.'
-                          : `You will sign in on ${selected.name}'s official website, choose the account or workspace, and approve the requested access. Byizon never receives your password.`
-                        : selected.id === 'slack' && selected.webhookReady
-                          ? 'Slack notifications are configured. Add Slack OAuth Client ID and Client Secret to also read and analyze channel history.'
-                          : `Developer OAuth credentials are required before ${selected.name} can open its official permission screen.`}
-                    </span>
+                <>
+                  {selected.id === 'google-workspace' && (
+                    <div className="google-permission-picker">
+                      <div>
+                        <strong>One Google sign-in</strong>
+                        <span>Authorize once, then choose the Google service when you run or browse a task.</span>
+                      </div>
+                      <div className="google-service-overview">
+                        {(selected.permissionGroups || []).map(permission => {
+                          const Icon = GOOGLE_PERMISSION_ICONS[permission.id] || Database;
+                          return (
+                            <span key={permission.id}>
+                              <Icon size={18} />
+                              <strong>{permission.label}</strong>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div className="oauth-explanation">
+                    <ExternalLink size={18} />
+                    <div>
+                      <strong>Provider authorization</strong>
+                      <span>
+                        {selected.oauthReady
+                          ? selected.id === 'google-workspace'
+                            ? 'Google opens one official account chooser and requests the listed Workspace permissions together. During each task, Byizon still asks which service to use and only performs the requested action.'
+                            : `You will sign in on ${selected.name}'s official website, choose the account or workspace, and approve the requested access. Byizon never receives your password.`
+                          : selected.id === 'slack' && selected.webhookReady
+                            ? 'Slack notifications are configured. Add Slack OAuth Client ID and Client Secret to also read and analyze channel history.'
+                            : `Developer OAuth credentials are required before ${selected.name} can open its official permission screen.`}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                </>
               )}
 
               <button className="connection-submit" type="submit" disabled={saving || (authMode === 'oauth' && !selected.oauthReady)}>
                 {saving ? <Loader2 size={16} className="spin" /> : authMode === 'url' ? <Link2 size={16} /> : <LockKeyhole size={16} />}
-                {saving ? 'Saving...' : authMode === 'url' ? 'Register source' : selected.oauthReady ? `Continue with ${selected.name}` : 'OAuth setup required'}
+                {saving ? 'Saving...' : authMode === 'url' ? 'Register source' : selected.oauthReady
+                  ? selected.id === 'google-workspace'
+                    ? 'Continue with Google Workspace'
+                    : `Continue with ${selected.name}`
+                  : 'OAuth setup required'}
               </button>
             </form>
           </section>
@@ -419,11 +510,25 @@ export default function Connections() {
             <span className="section-kicker">Connected data</span>
             <h2 id="resource-dialog-title">Choose data from {resourceConnection.name}</h2>
             <p>Select a file or business object. Byizon will download it through the authorized provider API and start a new isolated analysis session.</p>
+            {resourceConnection.connectorId === 'google-workspace' && (
+              <div className="google-resource-filters" aria-label="Choose Google data source">
+                {googleResourceFilters.map(item => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={resourceFilter === item.id ? 'active' : ''}
+                    onClick={() => setResourceFilter(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {loadingResources ? (
               <div className="connector-loading"><Loader2 size={20} className="spin" /> Loading authorized data...</div>
-            ) : resources.length ? (
+            ) : visibleResources.length ? (
               <div className="connection-resource-list">
-                {resources.map(resource => (
+                {visibleResources.map(resource => (
                   <article className="connection-resource-row" key={resource.id}>
                     <FileSpreadsheet size={18} />
                     <div>

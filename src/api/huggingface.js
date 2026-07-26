@@ -1,19 +1,7 @@
 import { askBackendChat } from './universalBackend';
 
-const HF_BASE_URL = 'https://router.huggingface.co/v1';
-const DEFAULT_HF_MODEL = 'google/gemma-2-2b-it';
-
-function getHFConfig() {
-  const apiKey = import.meta.env.VITE_HF_API_KEY || import.meta.env.VITE_HUGGINGFACE_API_KEY || '';
-  return {
-    apiKey: apiKey.trim(),
-    baseUrl: (import.meta.env.VITE_HF_API_BASE || HF_BASE_URL).replace(/\/$/, ''),
-    model: import.meta.env.VITE_HF_MODEL || DEFAULT_HF_MODEL,
-  };
-}
-
 export function hasHuggingFaceConfig() {
-  return Boolean(getHFConfig().apiKey);
+  return false;
 }
 
 export function handleHuggingFaceError(error) {
@@ -33,57 +21,8 @@ export function handleHuggingFaceError(error) {
   return `Hugging Face error: ${msg || 'Unknown error.'}`;
 }
 
-export async function callHuggingFaceChat(messages, options = {}) {
-  const { apiKey, baseUrl, model } = getHFConfig();
-  if (!apiKey) {
-    throw new Error('Hugging Face API key is not configured.');
-  }
-
-  const body = {
-    model: options.model || model,
-    messages,
-    max_tokens: options.maxTokens || 700,
-    temperature: options.temperature ?? 0.2,
-    stream: false,
-  };
-
-  if (options.responseFormat === 'json') {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-
-  const raw = await response.text();
-  let json;
-  try {
-    json = raw ? JSON.parse(raw) : null;
-  } catch {
-    json = null;
-  }
-
-  if (!response.ok) {
-    const detail = json?.error?.message || json?.message || raw || response.statusText;
-    throw new Error(`${response.status}: ${detail}`);
-  }
-
-  const content = json?.choices?.[0]?.message?.content;
-  if (!content || !String(content).trim()) {
-    throw new Error('Empty response from Hugging Face model.');
-  }
-  return String(content).trim();
-}
-
-function compactKpis(data) {
-  return (data.kpis || [])
-    .map(k => `- ${k.label}: ${k.value}; formula=${k.explainability?.formula || 'n/a'}; source=${k.explainability?.sourceColumn || 'n/a'}`)
-    .join('\n');
+export async function callHuggingFaceChat() {
+  throw new Error('External model calls are only allowed through the backend AI Orchestrator.');
 }
 
 function compactAnomalies(data) {
@@ -101,48 +40,6 @@ function compactCharts(data) {
     .slice(0, 4)
     .map(c => `- ${c.title || c.id}: ${(c.data || []).slice(0, 8).map(d => `${d.name ?? d.x}:${d.value ?? d.y}`).join(', ')}`)
     .join('\n');
-}
-
-function buildChatContext(data) {
-  const roles = data.columnRoles || data.mappedCols || {};
-  const business = data.businessSummary;
-  return `
-Dataset: ${data.fileName || 'dataset'}
-Rows: ${(data.rowCount || 0).toLocaleString()}
-Columns: ${(data.columns || []).join(', ')}
-Type: ${data.datasetType || 'General'} | Domain: ${data.businessDomain || 'General'}
-Quality: completeness=${data.dataQuality?.completeness ?? 'n/a'}%, score=${data.dataQuality?.quality ?? 'n/a'}/100
-Model/engine: ${data.model || 'local'}
-
-Column roles:
-${Object.entries(roles).filter(([, value]) => value).map(([role, col]) => `- ${role}: ${col}`).join('\n') || '- none'}
-
-Exact computed KPIs:
-${compactKpis(data) || '- none'}
-
-Business summary:
-${business ? [
-    `- Total ${business.salesLabel}: ${business.overall.totalSalesFormatted}`,
-    `- Total Profit: ${business.overall.totalProfitFormatted}`,
-    `- Avg Profit Margin: ${business.overall.avgProfitMarginFormatted}`,
-    `- Total Units Sold: ${business.overall.totalUnitsFormatted}`,
-  ].join('\n') : '- none'}
-
-Chart samples:
-${compactCharts(data) || '- none'}
-
-Anomalies:
-${compactAnomalies(data) || '- none'}
-
-Executive summary:
-${data.summary || 'No summary available.'}
-
-Insights:
-${(data.insights || []).map((x, i) => `${i + 1}. ${x}`).join('\n') || 'None'}
-
-Recommendations:
-${(data.recommendations || []).map((r, i) => `${i + 1}. ${r.title || ''}: ${r.desc || ''}`).join('\n') || 'None'}
-`.trim();
 }
 
 function findMatchingKpis(data, query) {
@@ -198,10 +95,6 @@ function formatBusinessSummary(data) {
 
 function isGreetingQuestion(question) {
   return /^(hi|hii|hello|hey|hlo|hy|namaste|namaskar|ram ram|good\s*(morning|afternoon|evening))[\s!.?]*$/i.test(question.trim());
-}
-
-function isDeterministicDataQuestion(question) {
-  return /profit|margin|sales|revenue|income|quantity|unit|order|kpi|metric|summary|overview|region|category|product|payment|rep|sales rep|top|cost|average|avg|total|highest|lowest|anomal|outlier|column|schema/i.test(question);
 }
 
 function localAnswer(question, data) {
@@ -280,6 +173,10 @@ function localAnswer(question, data) {
 }
 
 export async function askDataChat(question, data, history = []) {
+  const connectedActionRequest = (
+    /\b(gmail|email|mail|calendar|event|google\s+meet|meet(?:ing|ting)?\s+link|metting|google\s+sheet|spreadsheet|google\s+doc|document)\b/i.test(question)
+    || /\b(send|bhejo|bhjo|bhaj|create|banao|generate|genrate|make|schedule|book|append|write|save)\b/i.test(question)
+  );
   const connectedSourceRequest = (
     /\b(slack|channel|workspace|connected)\b/i.test(question)
     || /(?:se|waha|wahan).*(?:data|file|dataset)/i.test(question)
@@ -293,6 +190,10 @@ export async function askDataChat(question, data, history = []) {
     }
   }
 
+  if (connectedActionRequest) {
+    return askBackendChat(question, data, history);
+  }
+
   const local = () => localAnswer(question, data);
   if (data.engineType === 'python-pandas') {
     try {
@@ -302,35 +203,9 @@ export async function askDataChat(question, data, history = []) {
       console.warn('[BackendChat] Falling back to local answer:', error);
     }
   }
-  if (isGreetingQuestion(question) || isDeterministicDataQuestion(question)) return local();
-  if (!hasHuggingFaceConfig()) return local();
 
-  try {
-    const messages = [
-      {
-        role: 'system',
-        content: [
-          'You are DSI Data Analyst.',
-          'Answer only from the provided dataset context.',
-          'Never invent, estimate, or recalculate hidden numbers.',
-          'If a metric is not present, say it is not available in the current dataset summary.',
-          'Keep answers concise, business-friendly, and use markdown.',
-        ].join(' '),
-      },
-      {
-        role: 'user',
-        content: `DATASET CONTEXT:\n${buildChatContext(data)}`,
-      },
-      ...history.slice(-6).map(m => ({
-        role: m.role === 'user' ? 'user' : 'assistant',
-        content: m.text || '',
-      })),
-      { role: 'user', content: question },
-    ];
-
-    return await callHuggingFaceChat(messages, { maxTokens: 700, temperature: 0.15 });
-  } catch (error) {
-    console.warn('[HuggingFaceChat] Falling back to local answer:', error);
-    return local();
-  }
+  // Never send dataset context directly from the browser to an external model.
+  // The backend is the only model boundary and enforces database-first,
+  // query-scoped, and sensitive-column filtering policies.
+  return local();
 }

@@ -11,11 +11,19 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode, urlparse
 from uuid import uuid4
 
-from .connection_store import delete_connection, load_connections, save_connection
+from .activity_store import list_activities
+from .connection_store import (
+    delete_connection,
+    load_connections,
+    load_owner_aliases,
+    save_connection,
+    save_owner_alias,
+)
 from .notifications import slack_configured
 
 
@@ -50,6 +58,51 @@ REQUIRED_GOOGLE_SCOPES = {
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/documents",
 }
+GOOGLE_BASE_SCOPES = {"openid", "email", "profile"}
+GOOGLE_PERMISSION_GROUPS = {
+    "drive": {
+        "label": "Google Drive",
+        "description": "Browse supported files without granting Gmail or Calendar access.",
+        "scopes": {"https://www.googleapis.com/auth/drive.readonly"},
+    },
+    "sheets": {
+        "label": "Google Sheets",
+        "description": "Read, create, and update spreadsheets.",
+        "scopes": {
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/spreadsheets",
+        },
+    },
+    "gmail": {
+        "label": "Gmail",
+        "description": "Read authorized messages and send email on command.",
+        "scopes": {
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.send",
+        },
+    },
+    "calendar": {
+        "label": "Google Calendar",
+        "description": "Read calendars and create events.",
+        "scopes": {
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/calendar.events",
+        },
+    },
+    "meet": {
+        "label": "Google Meet",
+        "description": "Create Meet links through Calendar and invite attendees.",
+        "scopes": {"https://www.googleapis.com/auth/calendar.events"},
+    },
+    "docs": {
+        "label": "Google Docs",
+        "description": "Create documents from calculated reports.",
+        "scopes": {
+            "https://www.googleapis.com/auth/drive.readonly",
+            "https://www.googleapis.com/auth/documents",
+        },
+    },
+}
 
 CONNECTOR_CATALOG = [
     {
@@ -67,7 +120,11 @@ CONNECTOR_CATALOG = [
     {
         "id": "google-workspace", "name": "Google Workspace", "category": "Productivity",
         "description": "Analyze and automate Google Sheets, Gmail, Calendar, Drive, and Docs through one secure login.",
-        "authModes": ["oauth", "url"], "capabilities": ["Google Sheets", "Gmail", "Calendar", "Google Docs"],
+        "authModes": ["oauth", "url"], "capabilities": ["Google Sheets", "Gmail", "Calendar", "Google Meet", "Google Docs"],
+        "permissionGroups": [
+            {"id": key, **{field: value for field, value in group.items() if field != "scopes"}}
+            for key, group in GOOGLE_PERMISSION_GROUPS.items()
+        ],
         "accent": "#16a34a",
     },
     {
@@ -109,7 +166,46 @@ CONNECTOR_CATALOG = [
 ]
 
 _CONNECTIONS, _TOKENS = load_connections()
+_OWNER_ALIASES = load_owner_aliases()
 _OAUTH_STATES: dict[str, dict[str, Any]] = {}
+
+
+def _canonical_owner(owner_user_id: str | None) -> str | None:
+    owner = str(owner_user_id or "").strip()
+    if not owner:
+        return None
+    seen = set()
+    while owner in _OWNER_ALIASES and owner not in seen:
+        seen.add(owner)
+        owner = _OWNER_ALIASES[owner]
+    return owner
+
+
+def _owner_family(owner_user_id: str | None) -> set[str]:
+    """Return every known local/auth identity that belongs to one Byizon workspace."""
+    owner = str(owner_user_id or "").strip()
+    canonical = _canonical_owner(owner) or owner
+    if not canonical:
+        return set()
+
+    family = {canonical}
+    for alias, target in list(_OWNER_ALIASES.items()):
+        target_canonical = _canonical_owner(target) or target
+        alias_canonical = _canonical_owner(alias) or alias
+        if target_canonical == canonical or alias_canonical == canonical:
+            family.add(alias)
+            family.add(target)
+    return family
+
+
+def _remember_owner_alias(previous_owner_user_id: str | None, owner_user_id: str | None) -> None:
+    previous = str(previous_owner_user_id or "").strip()
+    owner = str(owner_user_id or "").strip()
+    if not previous or not owner or previous == owner:
+        return
+    owner = _canonical_owner(owner) or owner
+    _OWNER_ALIASES[previous] = owner
+    save_owner_alias(previous, owner)
 
 
 def _connector(connector_id: str) -> dict[str, Any]:
@@ -193,8 +289,17 @@ def _public_connection(connection: dict[str, Any]) -> dict[str, Any]:
             for scope in str(token.get("scope") or "").replace(",", " ").split()
             if scope.strip()
         }
+        public["permissions"] = [
+            {
+                "id": key,
+                "label": group["label"],
+                "granted": group["scopes"].issubset(granted),
+                "missingScopes": sorted(group["scopes"] - granted),
+            }
+            for key, group in GOOGLE_PERMISSION_GROUPS.items()
+        ]
         public["missingScopes"] = sorted(REQUIRED_GOOGLE_SCOPES - granted)
-        public["requiresReconnect"] = bool(public["missingScopes"])
+        public["requiresReconnect"] = False
     return public
 
 
@@ -202,19 +307,22 @@ def _owned_connection(connection_id: str, owner_user_id: str | None = None) -> d
     connection = _CONNECTIONS.get(connection_id)
     if not connection:
         raise ValueError("Connection was not found.")
-    if owner_user_id and connection.get("ownerUserId") != owner_user_id:
+    owner_family = _owner_family(owner_user_id)
+    if owner_family and connection.get("ownerUserId") not in owner_family:
         raise ValueError("Connection does not belong to this Byizon workspace.")
     return connection
 
 
 def _owned_connections(owner_user_id: str | None = None) -> list[dict[str, Any]]:
+    owner_family = _owner_family(owner_user_id)
     return [
         item for item in _CONNECTIONS.values()
-        if not owner_user_id or item.get("ownerUserId") == owner_user_id
+        if not owner_family or item.get("ownerUserId") in owner_family
     ]
 
 
 def list_connectors(owner_user_id: str) -> dict[str, Any]:
+    canonical_owner = _canonical_owner(owner_user_id) or owner_user_id
     catalog = [
         {
             **item,
@@ -225,8 +333,8 @@ def list_connectors(owner_user_id: str) -> dict[str, Any]:
     ]
     return {
         "catalog": catalog,
-        "connections": [_public_connection(item) for item in _owned_connections(owner_user_id)],
-        "workspaceUserId": owner_user_id,
+        "connections": [_public_connection(item) for item in _owned_connections(canonical_owner)],
+        "workspaceUserId": canonical_owner,
         "legacyConnectionsRequireReconnect": sum(
             1 for item in _CONNECTIONS.values() if not item.get("ownerUserId")
         ),
@@ -234,6 +342,7 @@ def list_connectors(owner_user_id: str) -> dict[str, Any]:
 
 
 def create_connection(payload: dict[str, Any], owner_user_id: str) -> dict[str, Any]:
+    owner_user_id = _canonical_owner(owner_user_id) or owner_user_id
     connector_id = str(payload.get("connectorId", "")).strip()
     connector = _connector(connector_id)
     auth_mode = str(payload.get("authMode", "url")).strip().lower()
@@ -280,7 +389,13 @@ def _new_connection(
     return connection
 
 
-def oauth_start(connector_id: str, frontend_return: str | None, owner_user_id: str) -> str:
+def oauth_start(
+    connector_id: str,
+    frontend_return: str | None,
+    owner_user_id: str,
+    capability: str | None = None,
+) -> str:
+    owner_user_id = _canonical_owner(owner_user_id) or owner_user_id
     _connector(connector_id)
     config = _provider_config(connector_id)
     missing = [key for key in ("client_id", "client_secret", "authorize_url", "token_url") if not config.get(key)]
@@ -300,12 +415,18 @@ def oauth_start(connector_id: str, frontend_return: str | None, owner_user_id: s
         "frontendReturn": safe_return,
         "createdAt": time.time(),
         "ownerUserId": owner_user_id,
+        "capability": capability,
     }
+    requested_scope = config["scope"]
+    if connector_id == "google-workspace" and capability in GOOGLE_PERMISSION_GROUPS:
+        requested_scope = " ".join(
+            sorted(GOOGLE_BASE_SCOPES | GOOGLE_PERMISSION_GROUPS[capability]["scopes"])
+        )
     params = {
         "client_id": config["client_id"],
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": config["scope"],
+        "scope": requested_scope,
         "state": state,
     }
     if connector_id == "microsoft-365":
@@ -339,6 +460,8 @@ def _safe_frontend_return(frontend_return: str | None) -> str:
 
 
 def reassign_owner(previous_owner_user_id: str, owner_user_id: str) -> int:
+    owner_user_id = _canonical_owner(owner_user_id) or owner_user_id
+    _remember_owner_alias(previous_owner_user_id, owner_user_id)
     if not previous_owner_user_id or previous_owner_user_id == owner_user_id:
         return 0
     updated = 0
@@ -346,12 +469,14 @@ def reassign_owner(previous_owner_user_id: str, owner_user_id: str) -> int:
         if connection.get("ownerUserId") != previous_owner_user_id:
             continue
         connection["ownerUserId"] = owner_user_id
+        connection["updatedAt"] = datetime.now(timezone.utc).isoformat()
         save_connection(connection, _TOKENS.get(connection["connectionId"]))
         updated += 1
     return updated
 
 
 def workspace_profile(owner_user_id: str) -> dict[str, Any]:
+    owner_user_id = _canonical_owner(owner_user_id) or owner_user_id
     google_connection = next(
         (
             item for item in _owned_connections(owner_user_id)
@@ -401,6 +526,7 @@ def oauth_callback(
             from .workspace_identity import google_workspace_id
 
             authenticated_owner_user_id = google_workspace_id(str(account.get("id") or ""))
+            _remember_owner_alias(state_owner_user_id, authenticated_owner_user_id)
             reassign_owner(state_owner_user_id, authenticated_owner_user_id)
             connection_owner_user_id = authenticated_owner_user_id
         connection = next(
@@ -417,6 +543,16 @@ def oauth_callback(
             connection["account"] = account
             connection["status"] = "connected"
             connection["message"] = "Account authorization updated successfully."
+            previous_token = _TOKENS.get(connection["connectionId"], {})
+            token["refresh_token"] = token.get("refresh_token") or previous_token.get("refresh_token")
+            previous_scopes = {
+                value for value in str(previous_token.get("scope") or "").replace(",", " ").split() if value
+            }
+            next_scopes = {
+                value for value in str(token.get("scope") or "").replace(",", " ").split() if value
+            }
+            if previous_scopes or next_scopes:
+                token["scope"] = " ".join(sorted(previous_scopes | next_scopes))
         else:
             connection = _new_connection(connector_id, "oauth", connection_owner_user_id, account=account)
         _TOKENS[connection["connectionId"]] = token
@@ -545,7 +681,10 @@ def list_resources(connection_id: str, owner_user_id: str | None = None) -> list
             for item in data.get("value", []) if item.get("file")
         ]
     if connector_id == "google-workspace":
-        return _list_google_resources(token)
+        return _list_google_resources(
+            token,
+            _token_scopes(_TOKENS.get(connection_id, {})),
+        )
     if connector_id == "salesforce":
         instance = _TOKENS[connection_id].get("instance_url") or connection.get("account", {}).get("instanceUrl")
         data = _http_json(f"{instance}/services/data/v61.0/sobjects/", token=token)
@@ -605,69 +744,97 @@ def download_resource(connection_id: str, resource_id: str, owner_user_id: str |
     raise ValueError("This connector does not expose an analyzable resource API yet.")
 
 
-def _list_google_resources(token: str) -> list[dict[str, Any]]:
+def _token_scopes(token_record: dict[str, Any]) -> set[str]:
+    return {
+        scope.strip()
+        for scope in str(token_record.get("scope") or "").replace(",", " ").split()
+        if scope.strip()
+    }
+
+
+def _list_google_resources(
+    token: str,
+    granted_scopes: set[str] | None = None,
+) -> list[dict[str, Any]]:
     resources: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
-    try:
-        query = "trashed = false"
-        fields = "files(id,name,mimeType,size,modifiedTime,webViewLink)"
-        url = f"https://www.googleapis.com/drive/v3/files?q={quote(query)}&pageSize=100&orderBy=modifiedTime%20desc&fields={quote(fields, safe='(),')}"
-        data = _http_json(url, token=token)
-        allowed = {
-            "application/vnd.google-apps.spreadsheet", "text/csv", "application/json", "text/plain",
-            "application/pdf", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.google-apps.document",
-        }
-        resources.extend(
-            {
-                "id": f"drive:{item['id']}",
-                "name": item.get("name", "Untitled"),
-                "type": (
-                    "google_sheet"
-                    if item.get("mimeType") == "application/vnd.google-apps.spreadsheet"
-                    else "google_doc"
-                    if item.get("mimeType") == "application/vnd.google-apps.document"
-                    else "google_drive_file"
-                ),
-                "size": item.get("size"),
-                "modifiedAt": item.get("modifiedTime"),
-                "canAnalyze": item.get("mimeType") in allowed,
+    scopes = granted_scopes or set()
+    can_browse_drive = (
+        "https://www.googleapis.com/auth/drive.readonly" in scopes
+        or "https://www.googleapis.com/auth/drive" in scopes
+    )
+    can_read_gmail = (
+        "https://www.googleapis.com/auth/gmail.readonly" in scopes
+        or "https://mail.google.com/" in scopes
+    )
+    can_read_calendars = (
+        "https://www.googleapis.com/auth/calendar.readonly" in scopes
+        or "https://www.googleapis.com/auth/calendar" in scopes
+    )
+
+    if can_browse_drive:
+        try:
+            query = "trashed = false"
+            fields = "files(id,name,mimeType,size,modifiedTime,webViewLink)"
+            url = f"https://www.googleapis.com/drive/v3/files?q={quote(query)}&pageSize=100&orderBy=modifiedTime%20desc&fields={quote(fields, safe='(),')}"
+            data = _http_json(url, token=token)
+            allowed = {
+                "application/vnd.google-apps.spreadsheet", "text/csv", "application/json", "text/plain",
+                "application/pdf", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/vnd.google-apps.document",
             }
-            for item in data.get("files", [])
-            if item.get("id")
-        )
-    except ValueError as exc:
-        errors.append(_source_error("Google Drive / Sheets", str(exc)))
+            resources.extend(
+                {
+                    "id": f"drive:{item['id']}",
+                    "name": item.get("name", "Untitled"),
+                    "type": (
+                        "google_sheet"
+                        if item.get("mimeType") == "application/vnd.google-apps.spreadsheet"
+                        else "google_doc"
+                        if item.get("mimeType") == "application/vnd.google-apps.document"
+                        else "google_drive_file"
+                    ),
+                    "size": item.get("size"),
+                    "modifiedAt": item.get("modifiedTime"),
+                    "canAnalyze": item.get("mimeType") in allowed,
+                }
+                for item in data.get("files", [])
+                if item.get("id")
+            )
+        except ValueError as exc:
+            errors.append(_source_error("Google Drive / Sheets", str(exc)))
 
-    try:
-        profile = _http_json("https://gmail.googleapis.com/gmail/v1/users/me/profile", token=token)
-        resources.append({
-            "id": "gmail:recent",
-            "name": "Gmail - recent messages",
-            "type": "gmail_messages",
-            "size": profile.get("messagesTotal"),
-            "modifiedAt": None,
-            "canAnalyze": True,
-        })
-    except ValueError as exc:
-        errors.append(_source_error("Gmail", str(exc)))
-
-    try:
-        calendars = _http_json("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=100", token=token)
-        resources.extend(
-            {
-                "id": f"calendar:{item['id']}",
-                "name": f"Calendar - {item.get('summary') or item['id']}",
-                "type": "google_calendar_events",
-                "size": None,
+    if can_read_gmail:
+        try:
+            profile = _http_json("https://gmail.googleapis.com/gmail/v1/users/me/profile", token=token)
+            resources.append({
+                "id": "gmail:recent",
+                "name": "Gmail - recent messages",
+                "type": "gmail_messages",
+                "size": profile.get("messagesTotal"),
                 "modifiedAt": None,
                 "canAnalyze": True,
-            }
-            for item in calendars.get("items", [])
-            if item.get("id")
-        )
-    except ValueError as exc:
-        errors.append(_source_error("Google Calendar", str(exc)))
+            })
+        except ValueError as exc:
+            errors.append(_source_error("Gmail", str(exc)))
+
+    if can_read_calendars:
+        try:
+            calendars = _http_json("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=100", token=token)
+            resources.extend(
+                {
+                    "id": f"calendar:{item['id']}",
+                    "name": f"Calendar - {item.get('summary') or item['id']}",
+                    "type": "google_calendar_events",
+                    "size": None,
+                    "modifiedAt": None,
+                    "canAnalyze": True,
+                }
+                for item in calendars.get("items", [])
+                if item.get("id")
+            )
+        except ValueError as exc:
+            errors.append(_source_error("Google Calendar", str(exc)))
     return resources + errors
 
 
@@ -1086,13 +1253,17 @@ def _labeled_value(question: str, label: str) -> str:
     return match.group(1).strip().strip("\"'") if match else ""
 
 
-def _google_action_connection(owner_user_id: str | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+def _google_action_connection(
+    owner_user_id: str | None,
+    capability: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     connection = _latest_owned_connection("google-workspace", owner_user_id)
     if not connection:
         return None, {
             "status": "unavailable",
             "message": "Connect Google Workspace first, then repeat this command.",
             "connector": "google-workspace",
+            "capability": capability,
         }
     token_record = _TOKENS.get(str(connection.get("connectionId")), {})
     granted = {
@@ -1100,17 +1271,57 @@ def _google_action_connection(owner_user_id: str | None) -> tuple[dict[str, Any]
         for scope in str(token_record.get("scope") or "").replace(",", " ").split()
         if scope.strip()
     }
-    missing = sorted(REQUIRED_GOOGLE_SCOPES - granted)
+    group = GOOGLE_PERMISSION_GROUPS[capability]
+    missing = sorted(group["scopes"] - granted)
     if missing:
         return None, {
             "status": "permission_required",
             "message": (
-                "Reconnect Google Workspace once and approve the new Sheets, Gmail, Calendar, and Docs permissions. "
-                "The existing connection has read-only or incomplete access."
+                f"{group['label']} permission is required for this command. "
+                "Open Integrations, choose Google Workspace, and authorize only this service."
             ),
             "connector": "google-workspace",
+            "capability": capability,
+            "missingScopes": missing,
         }
     return connection, None
+
+
+def _task_result(
+    *,
+    action: str,
+    title: str,
+    message: str,
+    resource: str | None = None,
+    url: str | None = None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    steps = [
+        {"label": "Command understood", "status": "complete"},
+        {"label": "Permission verified", "status": "complete"},
+        {"label": "Provider request completed", "status": "complete"},
+    ]
+    return {
+        "status": "complete",
+        "message": message,
+        "connector": "google-workspace",
+        "providerAction": action,
+        "resource": resource,
+        "url": url,
+        "task": {
+            "activityId": f"act_{uuid4().hex[:12]}",
+            "title": title,
+            "provider": "Google Workspace",
+            "action": action,
+            "status": "complete",
+            "message": message,
+            "resource": resource,
+            "url": url,
+            "details": details or {},
+            "steps": steps,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        },
+    }
 
 
 def _send_gmail_command(
@@ -1128,18 +1339,51 @@ def _send_gmail_command(
             "providerAction": "gmail_send",
         }
     recipient = recipient_match.group(0)
-    report = _analysis_report_text(analysis)
-    body = _labeled_value(question, "body") or _labeled_value(question, "message") or report
+    normalized = _match_text(question)
+    report_requested = any(
+        word in normalized
+        for word in ("report", "analysis", "analytics", "dataset", "summary", "kpi")
+    )
+    resignation_requested = any(
+        word in normalized
+        for word in ("resignation", "resign", "job chhod", "naukri chhod", "isteefa")
+    )
+    explicit_body = _labeled_value(question, "body") or _labeled_value(question, "message")
+    if resignation_requested and not explicit_body:
+        body = (
+            "Dear Sir/Madam,\n\n"
+            "Please accept this email as formal notice of my resignation from my position. "
+            "I am grateful for the opportunities, guidance, and experience I have received "
+            "during my time with the organization.\n\n"
+            "Please let me know the required notice-period and handover formalities. I will "
+            "do my best to ensure a smooth transition of my responsibilities.\n\n"
+            "Sincerely,\n"
+            "Ronak Agarwal"
+        )
+    elif explicit_body:
+        body = explicit_body
+    elif report_requested:
+        body = _analysis_report_text(analysis)
+    else:
+        body = ""
     if not body:
         return {
             "status": "selection_required",
-            "message": "Add `body: your message` or analyze a dataset before sending the email.",
+            "message": (
+                "Email content is required. Add `subject: ... body: ...`, or clearly ask me "
+                "to send the current analysis report."
+            ),
             "connector": "google-workspace",
             "providerAction": "gmail_send",
         }
     subject = _labeled_value(question, "subject")
     if not subject:
-        subject = f"Byizon report - {(analysis or {}).get('fileName', 'Workspace update')}"
+        if resignation_requested:
+            subject = "Resignation Letter"
+        elif report_requested:
+            subject = f"Byizon report - {(analysis or {}).get('fileName', 'Workspace update')}"
+        else:
+            subject = "Message from Ronak Agarwal"
     email = EmailMessage()
     email["To"] = recipient
     email["Subject"] = subject[:200]
@@ -1153,13 +1397,13 @@ def _send_gmail_command(
         token=token,
     )
     mark_connection_synced(connection["connectionId"], owner_user_id)
-    return {
-        "status": "complete",
-        "message": f"Email sent to {recipient} from the authorized Gmail account.",
-        "connector": "google-workspace",
-        "providerAction": "gmail_send",
-        "resource": result.get("id"),
-    }
+    return _task_result(
+        action="gmail_send",
+        title=f"Email to {recipient}",
+        message=f"Email sent to {recipient} from the authorized Gmail account.",
+        resource=result.get("id"),
+        details={"recipient": recipient, "subject": subject[:200]},
+    )
 
 
 def _create_google_doc_command(
@@ -1198,24 +1442,25 @@ def _create_google_doc_command(
     )
     mark_connection_synced(connection["connectionId"], owner_user_id)
     document_url = f"https://docs.google.com/document/d/{document_id}/edit"
-    return {
-        "status": "complete",
-        "message": f'Google Doc "{title}" created in the authorized account.',
-        "connector": "google-workspace",
-        "providerAction": "google_doc_create",
-        "resource": document_id,
-        "url": document_url,
-    }
+    return _task_result(
+        action="google_doc_create",
+        title=f'Created Google Doc "{title}"',
+        message=f'Google Doc "{title}" created in the authorized account.',
+        resource=document_id,
+        url=document_url,
+    )
 
 
 def _create_calendar_event_command(
     question: str,
     connection: dict[str, Any],
     owner_user_id: str | None,
+    *,
+    create_meet: bool = False,
 ) -> dict[str, Any]:
     date_match = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", question)
     time_match = re.search(r"\b([01]\d|2[0-3]):([0-5]\d)\b", question)
-    if not date_match or not time_match:
+    if (not date_match or not time_match) and not create_meet:
         return {
             "status": "selection_required",
             "message": "Use an exact date and time. Example: Calendar event create karo title: Review on 2026-07-20 15:30.",
@@ -1224,7 +1469,11 @@ def _create_calendar_event_command(
         }
     try:
         local_zone = timezone(timedelta(hours=5, minutes=30))
-        start = datetime.fromisoformat(f"{date_match.group(1)}T{time_match.group(0)}").replace(tzinfo=local_zone)
+        start = (
+            datetime.fromisoformat(f"{date_match.group(1)}T{time_match.group(0)}").replace(tzinfo=local_zone)
+            if date_match and time_match
+            else datetime.now(local_zone).replace(second=0, microsecond=0) + timedelta(minutes=5)
+        )
     except ValueError:
         return {
             "status": "selection_required",
@@ -1241,27 +1490,63 @@ def _create_calendar_event_command(
     )
     title = title_match.group(1).strip().strip("\"'") if title_match else "Byizon scheduled event"
     description = _labeled_value(question, "content") or _labeled_value(question, "message")
+    attendees = sorted(set(re.findall(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", question)))
+    event_body: dict[str, Any] = {
+        "summary": title[:240],
+        "description": description[:4000],
+        "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Kolkata"},
+        "end": {"dateTime": (start + timedelta(minutes=duration)).isoformat(), "timeZone": "Asia/Kolkata"},
+    }
+    if attendees:
+        event_body["attendees"] = [{"email": email} for email in attendees]
+    if create_meet:
+        event_body["conferenceData"] = {
+            "createRequest": {
+                "requestId": f"byizon-{uuid4().hex}",
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        }
     token = _refresh_access_token(connection["connectionId"])
+    query = "conferenceDataVersion=1" if create_meet else "conferenceDataVersion=0"
+    query += "&sendUpdates=all" if attendees else "&sendUpdates=none"
     event = _http_json(
-        "https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none",
+        f"https://www.googleapis.com/calendar/v3/calendars/primary/events?{query}",
         method="POST",
-        json_body={
-            "summary": title[:240],
-            "description": description[:4000],
-            "start": {"dateTime": start.isoformat(), "timeZone": "Asia/Kolkata"},
-            "end": {"dateTime": (start + timedelta(minutes=duration)).isoformat(), "timeZone": "Asia/Kolkata"},
-        },
+        json_body=event_body,
         token=token,
     )
     mark_connection_synced(connection["connectionId"], owner_user_id)
-    return {
-        "status": "complete",
-        "message": f'Calendar event "{title}" created for {start.strftime("%d %b %Y, %I:%M %p")} IST.',
-        "connector": "google-workspace",
-        "providerAction": "calendar_event_create",
-        "resource": event.get("id"),
-        "url": event.get("htmlLink"),
-    }
+    meeting_url = event.get("hangoutLink")
+    if create_meet and not meeting_url:
+        entry_points = event.get("conferenceData", {}).get("entryPoints", [])
+        meeting_url = next(
+            (item.get("uri") for item in entry_points if item.get("entryPointType") == "video"),
+            None,
+        )
+    action = "google_meet_create" if create_meet else "calendar_event_create"
+    message = (
+        f'Google Meet "{title}" created for {start.strftime("%d %b %Y, %I:%M %p")} IST.'
+        if create_meet
+        else f'Calendar event "{title}" created for {start.strftime("%d %b %Y, %I:%M %p")} IST.'
+    )
+    if create_meet and meeting_url:
+        message += f" Meeting link: {meeting_url}"
+    if attendees:
+        message += f" Invitation sent to {', '.join(attendees)}."
+    return _task_result(
+        action=action,
+        title=f'{"Meet" if create_meet else "Calendar"}: {title}',
+        message=message,
+        resource=event.get("id"),
+        url=meeting_url or event.get("htmlLink"),
+        details={
+            "start": start.isoformat(),
+            "durationMinutes": duration,
+            "attendees": attendees,
+            "calendarUrl": event.get("htmlLink"),
+            "meetingUrl": meeting_url,
+        },
+    )
 
 
 def _append_google_sheet_command(
@@ -1281,7 +1566,10 @@ def _append_google_sheet_command(
     normalized = _match_text(question)
     create_new = any(phrase in normalized for phrase in ("create new", "new sheet", "nayi sheet", "naya sheet"))
     sheets = [
-        item for item in _list_google_resources(token)
+        item for item in _list_google_resources(
+            token,
+            _token_scopes(_TOKENS.get(connection["connectionId"], {})),
+        )
         if item.get("type") == "google_sheet" and item.get("canAnalyze")
     ]
     matches = [
@@ -1336,14 +1624,13 @@ def _append_google_sheet_command(
     )
     mark_connection_synced(connection["connectionId"], owner_user_id)
     sheet_url = f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
-    return {
-        "status": "complete",
-        "message": f'Current calculated report appended to Google Sheet "{sheet.get("name")}".',
-        "connector": "google-workspace",
-        "providerAction": "google_sheet_append",
-        "resource": spreadsheet_id,
-        "url": sheet_url,
-    }
+    return _task_result(
+        action="google_sheet_append",
+        title=f'Updated Google Sheet "{sheet.get("name")}"',
+        message=f'Current calculated report appended to Google Sheet "{sheet.get("name")}".',
+        resource=spreadsheet_id,
+        url=sheet_url,
+    )
 
 
 def _execute_google_command(
@@ -1352,25 +1639,74 @@ def _execute_google_command(
     owner_user_id: str | None,
 ) -> dict[str, Any] | None:
     normalized = _match_text(question)
-    write_words = ("send", "bhejo", "bhjo", "create", "banao", "schedule", "book", "append", "write", "save")
+    write_words = (
+        "send", "bhejo", "bhjo", "bhaj", "create", "banao", "generate", "genrate",
+        "make", "schedule", "book", "append", "write", "save", "meeting",
+        "metting", "meet link",
+    )
     if not any(word in normalized for word in write_words):
         return None
     gmail_intent = any(word in normalized for word in ("gmail", "email", "mail"))
-    calendar_intent = "calendar" in normalized or "event" in normalized
+    meet_intent = any(
+        word in normalized
+        for word in (
+            "google meet", "meet link", "meeting link", "metting link",
+            "meting link", "video meeting",
+        )
+    )
+    calendar_intent = (
+        "calendar" in normalized
+        or "event" in normalized
+        or "meeting" in normalized
+        or "metting" in normalized
+    )
     doc_intent = any(word in normalized for word in ("google doc", "google document", "docs"))
     sheet_intent = any(word in normalized for word in ("google sheet", "spreadsheet", "sheets"))
-    if not any((gmail_intent, calendar_intent, doc_intent, sheet_intent)):
+    if not any((gmail_intent, calendar_intent, meet_intent, doc_intent, sheet_intent)):
+        connection = _latest_owned_connection("google-workspace", owner_user_id)
+        if connection:
+            granted = _token_scopes(_TOKENS.get(str(connection.get("connectionId")), {}))
+            prompts = {
+                "gmail": "Gmail se recipient@example.com ko current report bhejo",
+                "calendar": "Calendar event create karo title: Review on 2026-07-20 15:30",
+                "meet": "Google Meet link banao title: Review on 2026-07-20 15:30 aur recipient@example.com ko bhejo",
+                "docs": "Google Doc banao title: Current Analysis",
+                "sheets": "Current report ke liye create new Google Sheet",
+            }
+            choices = [
+                {
+                    "id": key,
+                    "label": group["label"],
+                    "prompt": prompts[key],
+                }
+                for key, group in GOOGLE_PERMISSION_GROUPS.items()
+                if key in prompts and group["scopes"].issubset(granted)
+            ]
+            if choices:
+                return {
+                    "status": "selection_required",
+                    "message": "Choose which authorized Google service should perform this task.",
+                    "connector": "google-workspace",
+                    "capability": "selection",
+                    "choices": choices,
+                }
         return None
-    connection, error = _google_action_connection(owner_user_id)
+    capability = "gmail" if gmail_intent and not meet_intent else "meet" if meet_intent else "calendar" if calendar_intent else "docs" if doc_intent else "sheets"
+    connection, error = _google_action_connection(owner_user_id, capability)
     if error:
         return error
-    if gmail_intent:
-        return _send_gmail_command(question, analysis, connection, owner_user_id)
-    if calendar_intent:
-        return _create_calendar_event_command(question, connection, owner_user_id)
-    if doc_intent:
-        return _create_google_doc_command(question, analysis, connection, owner_user_id)
-    return _append_google_sheet_command(question, analysis, connection, owner_user_id)
+    if meet_intent:
+        result = _create_calendar_event_command(question, connection, owner_user_id, create_meet=True)
+    elif gmail_intent:
+        result = _send_gmail_command(question, analysis, connection, owner_user_id)
+    elif calendar_intent:
+        result = _create_calendar_event_command(question, connection, owner_user_id)
+    elif doc_intent:
+        result = _create_google_doc_command(question, analysis, connection, owner_user_id)
+    else:
+        result = _append_google_sheet_command(question, analysis, connection, owner_user_id)
+    result.setdefault("capability", capability)
+    return result
 
 
 def execute_connected_command(
@@ -1378,77 +1714,143 @@ def execute_connected_command(
     analysis: dict[str, Any] | None,
     owner_user_id: str | None = None,
 ) -> dict[str, Any] | None:
+    normalized = _match_text(question)
+    link_follow_up = any(
+        phrase in normalized
+        for phrase in ("give me the link", "show me the link", "link do", "link bata", "meeting ka link")
+    )
+    if link_follow_up:
+        latest = next(
+            (
+                item for item in list_activities(owner_user_id or "guest", 30)
+                if item.get("url") and item.get("action") == "google_meet_create"
+            ),
+            None,
+        )
+        if latest:
+            url = str(latest["url"])
+            return {
+                "status": "complete",
+                "message": f"Your latest Google Meet link is: {url}",
+                "connector": "google-workspace",
+                "providerAction": "google_meet_link",
+                "resource": latest.get("resource"),
+                "url": url,
+                "task": {
+                    **latest,
+                    "activityId": f"act_{uuid4().hex[:12]}",
+                    "title": "Google Meet link ready",
+                    "message": f"Copy and forward this meeting link: {url}",
+                    "createdAt": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+
+    send_intent = any(token in normalized for token in ("send", "post", "share", "bhejo", "bhjo", "publish"))
+    slack_intent = "slack" in normalized or "channel" in normalized or "#" in question
+    if send_intent and slack_intent:
+        connections = [
+            item for item in _owned_connections(owner_user_id)
+            if item.get("connectorId") == "slack" and item.get("status") == "connected"
+        ]
+        if not connections:
+            return {"status": "unavailable", "message": "Connect Slack first, then repeat the send command."}
+        connection = sorted(connections, key=lambda item: item.get("createdAt", ""), reverse=True)[0]
+        resources = list_resources(connection["connectionId"], owner_user_id)
+        channels = [item for item in resources if item.get("type") == "slack_channel"]
+        requested_match = re.search(r"#\s*([\w-]+(?:\s+[\w-]+)*)", question)
+        requested = _match_text(requested_match.group(1)).replace(" ", "-") if requested_match else ""
+        matching = [
+            channel for channel in channels
+            if any(
+                (requested and _match_text(str(name)).replace(" ", "-") == requested)
+                or (not requested and _match_text(str(name)) in normalized)
+                or (_match_text(str(name)).replace("-", " ") in normalized)
+                for name in channel.get("channelNames", [])
+            )
+        ]
+        if len(matching) != 1:
+            available = ", ".join(f"#{item.get('channelNames', ['unknown'])[0]}" for item in channels[:12])
+            return {
+                "status": "selection_required",
+                "message": f"Specify one Slack channel. Available channels: {available or 'none visible'}.",
+            }
+
+        channel = matching[0]
+        token = _refresh_access_token(connection["connectionId"])
+        channel_id = channel["id"].split(":", 1)[1]
+        if not channel.get("isMember") and not channel.get("isPrivate"):
+            _join_slack_channel(channel_id, token)
+        link_requested = any(value in normalized for value in ("meet", "meeting link", "link"))
+        latest_meet = next(
+            (
+                item for item in list_activities(owner_user_id or "guest", 30)
+                if item.get("url") and item.get("action") == "google_meet_create"
+            ),
+            None,
+        ) if link_requested else None
+        if latest_meet:
+            result_url = str(latest_meet["url"])
+            message = f"Google Meet invitation from Byizon\n{result_url}"
+            action_label = "Meeting link"
+        elif analysis:
+            kpi_lines = [
+                f"- {item.get('label')}: {item.get('value')}"
+                for item in (analysis.get("kpis") or [])[:6]
+                if item.get("label") and item.get("value") is not None
+            ]
+            summary = str(analysis.get("summary") or "").strip()
+            message = "\n".join([
+                f"Byizon report: {analysis.get('fileName', 'Current dataset')}",
+                f"Rows analyzed: {int(analysis.get('rowCount') or 0):,}",
+                *(kpi_lines or ["- No report KPIs were available."]),
+                "",
+                summary[:1200],
+            ]).strip()[:3000]
+            result_url = None
+            action_label = "Report"
+        else:
+            return {
+                "status": "unavailable",
+                "message": "No meeting link or analyzed dataset is available to send.",
+            }
+        _slack_json(
+            "https://slack.com/api/chat.postMessage",
+            token,
+            method="POST",
+            form={"channel": channel_id, "text": message},
+        )
+        mark_connection_synced(connection["connectionId"], owner_user_id)
+        channel_name = channel.get("channelNames", [channel_id])[0]
+        result_message = f"{action_label} sent to #{channel_name} using the authorized Slack connection."
+        return {
+            "status": "complete",
+            "message": result_message,
+            "connector": "slack",
+            "providerAction": "slack_post",
+            "channel": channel_name,
+            "url": result_url,
+            "task": {
+                "activityId": f"act_{uuid4().hex[:12]}",
+                "title": f"{action_label} sent to #{channel_name}",
+                "provider": "Slack",
+                "action": "slack_post",
+                "status": "complete",
+                "message": result_message,
+                "url": result_url,
+                "details": {"channel": channel_name},
+                "steps": [
+                    {"label": "Command understood", "status": "complete"},
+                    {"label": "Slack permission verified", "status": "complete"},
+                    {"label": "Message posted", "status": "complete"},
+                ],
+                "createdAt": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+
     google_command = _execute_google_command(question, analysis, owner_user_id)
     if google_command:
         return google_command
-    normalized = _match_text(question)
-    send_intent = any(token in normalized for token in ("send", "post", "share", "bhejo", "bhjo", "publish"))
-    slack_intent = "slack" in normalized or "channel" in normalized or "#" in question
-    if not send_intent or not slack_intent:
-        return None
-    if not analysis:
-        return {
-            "status": "unavailable",
-            "message": "Analyze or upload a dataset before sending a report to Slack.",
-        }
-
-    connections = [
-        item for item in _owned_connections(owner_user_id)
-        if item.get("connectorId") == "slack" and item.get("status") == "connected"
-    ]
-    if not connections:
-        return {"status": "unavailable", "message": "Connect Slack first, then repeat the send command."}
-    connection = sorted(connections, key=lambda item: item.get("createdAt", ""), reverse=True)[0]
-    resources = list_resources(connection["connectionId"], owner_user_id)
-    channels = [item for item in resources if item.get("type") == "slack_channel"]
-    requested = _match_text(re.search(r"#([\w-]+)", question).group(1)) if re.search(r"#([\w-]+)", question) else ""
-    matching = [
-        channel for channel in channels
-        if any(
-            (requested and _match_text(str(name)) == requested)
-            or (not requested and _match_text(str(name)) in normalized)
-            for name in channel.get("channelNames", [])
-        )
-    ]
-    if len(matching) != 1:
-        available = ", ".join(f"#{item.get('channelNames', ['unknown'])[0]}" for item in channels[:12])
-        return {
-            "status": "selection_required",
-            "message": f"Specify one Slack channel. Available channels: {available or 'none visible'}.",
-        }
-
-    channel = matching[0]
-    token = _refresh_access_token(connection["connectionId"])
-    channel_id = channel["id"].split(":", 1)[1]
-    if not channel.get("isMember") and not channel.get("isPrivate"):
-        _join_slack_channel(channel_id, token)
-    kpi_lines = [
-        f"- {item.get('label')}: {item.get('value')}"
-        for item in (analysis.get("kpis") or [])[:6]
-        if item.get("label") and item.get("value") is not None
-    ]
-    summary = str(analysis.get("summary") or "").strip()
-    message = "\n".join([
-        f"Byizon report: {analysis.get('fileName', 'Current dataset')}",
-        f"Rows analyzed: {int(analysis.get('rowCount') or 0):,}",
-        *(kpi_lines or ["- No report KPIs were available."]),
-        "",
-        summary[:1200],
-    ]).strip()[:3000]
-    _slack_json(
-        "https://slack.com/api/chat.postMessage",
-        token,
-        method="POST",
-        form={"channel": channel_id, "text": message},
-    )
-    mark_connection_synced(connection["connectionId"], owner_user_id)
-    channel_name = channel.get("channelNames", [channel_id])[0]
-    return {
-        "status": "complete",
-        "message": f"Report sent to #{channel_name} using this workspace's authorized Slack connection.",
-        "connector": "slack",
-        "channel": channel_name,
-    }
+    return None
 
 
 def resolve_connected_resource(question: str, owner_user_id: str | None = None) -> dict[str, Any] | None:
@@ -1575,10 +1977,13 @@ def resolve_connected_resource(question: str, owner_user_id: str | None = None) 
     scored: list[tuple[int, dict[str, Any]]] = []
     for resource in resources:
         resource_name = _match_text(str(resource.get("name") or ""))
+        resource_stem = _match_text(Path(str(resource.get("name") or "")).stem)
         channel_names = [_match_text(str(name)) for name in resource.get("channelNames", [])]
         score = 0
         if resource_name and resource_name in normalized_question:
-            score += 100
+            score += 160
+        elif resource_stem and resource_stem in normalized_question:
+            score += 140
         for channel_name in channel_names:
             if channel_name and channel_name in normalized_question:
                 score += 80
@@ -1597,7 +2002,14 @@ def resolve_connected_resource(question: str, owner_user_id: str | None = None) 
             score += 20
         scored.append((score, resource))
 
-    scored.sort(key=lambda item: (item[0], item[1].get("type") == "slack_file"), reverse=True)
+    scored.sort(
+        key=lambda item: (
+            item[0],
+            item[1].get("type") == "slack_file",
+            str(item[1].get("modifiedAt") or item[1].get("createdAt") or ""),
+        ),
+        reverse=True,
+    )
     positive = [item for item in scored if item[0] > 0]
     if not positive and not source_intent:
         return None
@@ -1616,7 +2028,21 @@ def resolve_connected_resource(question: str, owner_user_id: str | None = None) 
         top_score = positive[0][0]
         tied = [resource for score, resource in positive if score == top_score]
         file_ties = [resource for resource in tied if resource.get("type") == "slack_file"]
-        selected = file_ties[0] if len(file_ties) == 1 else tied[0]
+        asks_for_latest = any(
+            token in normalized_question
+            for token in ("latest", "newest", "recent", "naya", "new file")
+        )
+        if len(file_ties) > 1 and not asks_for_latest:
+            names = ", ".join(str(resource.get("name") or "Unnamed") for resource in file_ties[:8])
+            return {
+                "status": "selection_required",
+                "message": (
+                    "Multiple Slack files match this request. Please include the exact filename. "
+                    f"Matching files: {names}."
+                ),
+                "invalidateCurrentAnalysis": False,
+            }
+        selected = file_ties[0] if file_ties else tied[0]
 
     return {
         "status": "ready",

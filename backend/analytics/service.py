@@ -45,6 +45,72 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _build_llm_context(result: dict[str, Any]) -> dict[str, Any]:
+    """Return only deterministic, compact evidence that an LLM may receive."""
+    semantic_columns = []
+    for column in (result.get("semanticColumns") or [])[:100]:
+        if not isinstance(column, dict):
+            continue
+        semantic_columns.append({
+            "name": column.get("name"),
+            "semanticType": column.get("semanticType") or column.get("semantic_type"),
+            "analyticalRole": column.get("analyticalRole") or column.get("analytical_role"),
+            "importanceScore": column.get("importanceScore") or column.get("importance_score"),
+        })
+
+    compact_kpis = []
+    for kpi in (result.get("kpis") or [])[:12]:
+        if not isinstance(kpi, dict):
+            continue
+        explainability = kpi.get("explainability") if isinstance(kpi.get("explainability"), dict) else {}
+        source_columns = (
+            kpi.get("sourceColumns")
+            or explainability.get("sourceColumns")
+            or explainability.get("sourceColumn")
+            or []
+        )
+        if isinstance(source_columns, str):
+            source_columns = [source_columns]
+        compact_kpis.append({
+            "label": kpi.get("label") or kpi.get("title"),
+            "value": kpi.get("value"),
+            "formattedValue": kpi.get("formattedValue"),
+            "formula": kpi.get("formula") or explainability.get("formula"),
+            "sourceColumns": source_columns,
+            "confidence": kpi.get("confidence") or explainability.get("confidence"),
+        })
+
+    compact_charts = []
+    for chart in (result.get("charts") or [])[:6]:
+        if not isinstance(chart, dict):
+            continue
+        compact_charts.append({
+            "id": chart.get("id"),
+            "title": chart.get("title"),
+            "type": chart.get("type"),
+            "sourceColumns": chart.get("sourceColumns") or [],
+            "data": (chart.get("data") or [])[:12],
+        })
+
+    return {
+        "schemaVersion": "1.0",
+        "policy": "processed-evidence-only-no-raw-rows",
+        "fileName": result.get("fileName"),
+        "rowCount": result.get("rowCount"),
+        "colCount": result.get("colCount"),
+        "datasetType": result.get("datasetType"),
+        "businessDomain": result.get("businessDomain"),
+        "columns": semantic_columns,
+        "dataQuality": result.get("dataQualitySummary") or result.get("dataQuality"),
+        "kpis": compact_kpis,
+        "charts": compact_charts,
+        "insights": (result.get("insightObjects") or result.get("insights") or [])[:8],
+        "hiddenPatterns": (result.get("hiddenPatterns") or [])[:8],
+        "recommendations": (result.get("recommendations") or [])[:8],
+        "summary": result.get("summary"),
+    }
+
+
 def _records(df: pd.DataFrame, limit: int = 5000) -> list[dict[str, Any]]:
     clean = df.head(limit).copy()
     for column in clean.columns:
@@ -165,6 +231,7 @@ def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
         "currencySymbol": "Rs",
         "autoFilterColumns": _auto_filter_columns(primary_table.dataframe, schema),
     }
+    result["llmContext"] = _build_llm_context(result)
     return _jsonable(result)
 
 
