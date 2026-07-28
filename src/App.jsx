@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import { DataProvider } from "./context/DataContext";
 
 import Landing      from "./Pages/Landing";
@@ -13,16 +13,26 @@ import DashboardStudio from "./Pages/DashboardStudio";
 import SharedCustomDashboard from "./Pages/SharedCustomDashboard";
 import Meetings from "./Pages/Meetings";
 import CalendarPage from "./Pages/CalendarPage";
+import Privacy from "./Pages/Privacy";
+import Terms from "./Pages/Terms";
 import GlobalVoiceAssistant from "./voice/GlobalVoiceAssistant";
+
+function AppVoiceAssistant() {
+  const { pathname } = useLocation();
+  const isPublicPage = ["/landing", "/privacy", "/terms"].includes(pathname);
+  return isPublicPage ? null : <GlobalVoiceAssistant />;
+}
 
 function App() {
   return (
     <DataProvider>
       <BrowserRouter>
-        <GlobalVoiceAssistant />
+        <AppVoiceAssistant />
         <Routes>
           <Route path="/"              element={<Home />}         />
           <Route path="/landing"       element={<Landing />}      />
+          <Route path="/privacy"       element={<Privacy />}      />
+          <Route path="/terms"         element={<Terms />}        />
           <Route path="/upload"        element={<UploadPage />}   />
           <Route path="/dashboard"     element={<Dashboard />}    />
           <Route path="/chat"          element={<Chat />}         />
