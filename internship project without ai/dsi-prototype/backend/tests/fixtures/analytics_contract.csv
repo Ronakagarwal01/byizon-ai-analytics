@@ -1,5 +1,0 @@
-record_id,event_date,segment,amount,cost,outcome
-R001,2026-01-01,North,100,60,Won
-R002,2026-01-02,South,200,120,Lost
-R003,2026-02-01,North,300,150,Won
-R004,2026-02-02,South,400,320,Won
