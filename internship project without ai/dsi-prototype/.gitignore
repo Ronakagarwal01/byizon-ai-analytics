@@ -8,7 +8,16 @@ pnpm-debug.log*
 lerna-debug.log*
 
 
+node_modules/
+.env
+.venv/
+__pycache__/
+dist/
+build/
+.next/
+
 node_modules
+.venv/
 dist
 dist-ssr
 *.local
@@ -40,4 +49,5 @@ backend/**/__pycache__/
 # Local/generated workspace artifacts
 tmp/
 output/
+.tmp-inspect/
 *-Ronak_HP*
