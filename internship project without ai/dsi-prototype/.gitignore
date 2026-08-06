@@ -1,0 +1,53 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+
+node_modules/
+.env
+.venv/
+__pycache__/
+dist/
+build/
+.next/
+
+node_modules
+.venv/
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment variables (keep tokens secret)
+.env
+.env.local
+.env.*.local
+backend/data/connections.sqlite3
+backend/data/connector_encryption.key
+backend/data/*.bin
+backend/data/*.key
+backend/data/*.db
+backend/data/*.sqlite3
+backend/**/__pycache__/
+*.pyc
+
+# Local/generated workspace artifacts
+tmp/
+output/
+.tmp-inspect/
+*-Ronak_HP*
