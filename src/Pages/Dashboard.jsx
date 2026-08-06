@@ -1,0 +1,1781 @@
+﻿import { useState, useRef, useEffect, useMemo } from 'react';
+import Sidebar from '../components/Sidebar';
+import KPICard from '../components/KPICard';
+import SecureExportDialog from '../components/SecureExportDialog';
+import { useData } from '../context/DataContext';
+import { recomputeFilteredKPIs } from '../api/analyticsEngine';
+import { askDataChat } from '../api/huggingface';
+import { refreshConnectedSource } from '../api/universalBackend';
+import * as XLSX from 'xlsx';
+import {
+  LineChart, Line,
+  BarChart, Bar, PieChart, Pie, Cell, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+} from 'recharts';
+import {
+  DollarSign, ShoppingCart, TrendingUp, TrendingDown, Users, BarChart2,
+  Share2, Download, RefreshCw, FileSpreadsheet,
+  Sparkles, AlertTriangle, CheckCircle2, Target, Send, Zap, Loader2,
+  Filter, ChevronLeft, ChevronRight, ChevronDown, DownloadCloud,
+  Activity, Copy, RotateCcw, Square, PanelBottomClose, PanelBottomOpen,
+  Settings
+} from 'lucide-react';
+import { Link } from 'react-router-dom';
+
+const VISUAL_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#eab308', '#f97316'];
+const CHART_TOOLTIP_STYLE = {
+  background: 'var(--bg-card)',
+  border: '1px solid var(--border-blue)',
+  borderRadius: 8,
+  fontSize: 12,
+  color: 'var(--text-primary)'
+};
+
+const ICON_MAP = {
+  'Total Sales': DollarSign,
+  'Total Revenue': DollarSign,
+  'Total Income': DollarSign,
+  'Total Expense': TrendingDown,
+  'Net Profit': DollarSign,
+  'Total Orders': ShoppingCart,
+  'Ad Spend': DollarSign,
+  'Average Order Value': BarChart2,
+  'Total Products Sold': Users,
+  'Units Sold': Users,
+  'Highest Sale': TrendingUp,
+  'Lowest Sale': TrendingDown,
+  'Attendance Rate': CheckCircle2,
+  'Present Days': CheckCircle2,
+  'Active Employees': Users,
+  'Attrition Rate': Users,
+  'Average Score': Target,
+  'Win Rate %': Target,
+  'Stock Value': FileSpreadsheet,
+  'Unique SKUs': FileSpreadsheet,
+};
+
+const ICON_BKGS = {
+  'Total Sales': 'rgba(59,130,246,0.1)',
+  'Total Revenue': 'rgba(59,130,246,0.1)',
+  'Total Income': 'rgba(59,130,246,0.1)',
+  'Total Expense': 'rgba(239,68,68,0.1)',
+  'Net Profit': 'rgba(16,185,129,0.1)',
+  'Total Orders': 'rgba(99,102,241,0.1)',
+  'Average Order Value': 'rgba(245,158,11,0.1)',
+  'Total Products Sold': 'rgba(16,185,129,0.1)',
+  'Units Sold': 'rgba(16,185,129,0.1)',
+  'Highest Sale': 'rgba(20,184,166,0.1)',
+  'Lowest Sale': 'rgba(239,68,68,0.1)',
+  'Attendance Rate': 'rgba(16,185,129,0.1)',
+  'Present Days': 'rgba(16,185,129,0.1)',
+  'Active Employees': 'rgba(59,130,246,0.1)',
+  'Attrition Rate': 'rgba(239,68,68,0.1)',
+  'Average Score': 'rgba(99,102,241,0.1)',
+  'Win Rate %': 'rgba(20,184,166,0.1)',
+  'Stock Value': 'rgba(245,158,11,0.1)',
+  'Unique SKUs': 'rgba(99,102,241,0.1)',
+};
+
+function SummaryList({ title, items, mode = 'value' }) {
+  if (!items?.length) return null;
+  return (
+    <div style={{ padding: 16, background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 12 }}>{title}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {items.map((item) => (
+          <div key={item.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
+            <span style={{ color: 'var(--text-secondary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {item.rank}. {item.name}
+            </span>
+            <strong style={{ color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+              {mode === 'count' ? `${item.count.toLocaleString('en-IN')} records` : item.value}
+            </strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatShortNumber(value) {
+  const n = Number(value) || 0;
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs >= 10000000) return `${sign}${(abs / 10000000).toFixed(1)}cr`;
+  if (abs >= 100000) return `${sign}${(abs / 100000).toFixed(1)}L`;
+  if (abs >= 1000) return `${sign}${(abs / 1000).toFixed(1)}k`;
+  return `${sign}${abs.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+function formatCurrencyTooltip(value) {
+  return `â‚¹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+}
+
+function toValueChartData(items = [], valueKey = 'rawValue') {
+  return items.map(item => ({
+    name: item.name,
+    value: Number(item[valueKey] ?? item.count ?? 0),
+    label: item.value || (item.count !== undefined ? `${item.count.toLocaleString('en-IN')} records` : ''),
+  }));
+}
+
+function getAnomalySeverity(anomaly) {
+  if (typeof anomaly === 'string') return 'Warning';
+  return anomaly?.severity || 'Info';
+}
+
+function VisualChartCard({ id, title, subtitle, children, onExport }) {
+  return (
+    <div className="chart-card" id={id}>
+      <div className="chart-card-header">
+        <div>
+          <div className="chart-card-title">{title}</div>
+          <div className="chart-card-subtitle">{subtitle}</div>
+        </div>
+        {onExport && (
+          <button className="btn-outline" onClick={() => onExport(id)} style={{ fontSize: 11, padding: '4px 8px' }}>
+            <DownloadCloud size={12} /> PNG
+          </button>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function numericChartValue(item) {
+  const candidates = [item.rawValue, item.value, item.count, item.revenue, item.sales, item.profit];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function UniversalChart({ chart, index }) {
+  const data = (chart.data || []).slice(0, 30).map(item => ({
+    ...item,
+    name: String(item.name ?? item.x ?? item.column ?? item.y ?? `Item ${index + 1}`),
+    numericValue: numericChartValue(item),
+  }));
+  if (!data.length) return null;
+
+  if (chart.type === 'heatmap') {
+    const cells = data.slice(0, 80);
+    return (
+      <VisualChartCard id={`auto-chart-${index}`} title={chart.title} subtitle={chart.description || 'Calculated from numeric columns'}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))', gap: 6 }}>
+          {cells.map((cell, i) => {
+            const intensity = Math.min(1, Math.abs(Number(cell.value || 0)));
+            return (
+              <div key={`${cell.x}-${cell.y}-${i}`} title={`${cell.x} vs ${cell.y}: ${cell.value}`} style={{
+                padding: 8,
+                minHeight: 54,
+                borderRadius: 6,
+                border: '1px solid var(--border-subtle)',
+                background: `rgba(59, 130, 246, ${0.08 + intensity * 0.32})`,
+                color: 'var(--text-primary)',
+                fontSize: 10,
+              }}>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cell.x}</div>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }}>{cell.y}</div>
+                <strong>{Number(cell.value || 0).toFixed(2)}</strong>
+              </div>
+            );
+          })}
+        </div>
+      </VisualChartCard>
+    );
+  }
+
+  if (chart.type === 'line') {
+    return (
+      <VisualChartCard id={`auto-chart-${index}`} title={chart.title} subtitle={chart.description || 'Trend'}>
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 30 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+            <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} angle={-20} textAnchor="end" height={58} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatShortNumber} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [formatCurrencyTooltip(value), 'Value']} />
+            <Line type="monotone" dataKey="numericValue" stroke="#3b82f6" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </VisualChartCard>
+    );
+  }
+
+  if (chart.type === 'pie' || chart.type === 'donut') {
+    return (
+      <VisualChartCard id={`auto-chart-${index}`} title={chart.title} subtitle={chart.description || 'Distribution'}>
+        <ResponsiveContainer width="100%" height={260}>
+          <PieChart>
+            <Pie data={data.slice(0, 10)} dataKey="numericValue" nameKey="name" innerRadius={chart.type === 'donut' ? 48 : 0} outerRadius={86} paddingAngle={2}>
+              {data.slice(0, 10).map((entry, i) => (
+                <Cell key={entry.name} fill={VISUAL_COLORS[i % VISUAL_COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [Number(value || 0).toLocaleString('en-IN'), 'Value']} />
+            <Legend verticalAlign="bottom" height={44} wrapperStyle={{ fontSize: 11 }} />
+          </PieChart>
+        </ResponsiveContainer>
+      </VisualChartCard>
+    );
+  }
+
+  return (
+    <VisualChartCard id={`auto-chart-${index}`} title={chart.title} subtitle={chart.description || 'Auto-generated chart'}>
+      <ResponsiveContainer width="100%" height={280}>
+        <BarChart data={data.slice(0, 12)} margin={{ top: 8, right: 12, left: 0, bottom: 42 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+          <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" height={66} />
+          <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatShortNumber} />
+          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [Number(value || 0).toLocaleString('en-IN'), 'Value']} />
+          <Bar dataKey="numericValue" name="Value" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </VisualChartCard>
+  );
+}
+
+export default function Dashboard() {
+  const { uploadedData, setUploadedData } = useData();
+  const [activeTab, setActiveTab] = useState('overview'); // overview | visuals | quality | drilldown | anomalies
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeFilters, setActiveFilters] = useState({});
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [anomalyFilter, setAnomalyFilter] = useState('All'); // All | Critical | Warning | Info
+  const [debugMode, setDebugMode] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [secureDialogMode, setSecureDialogMode] = useState(null);
+  const rowsPerPage = 10;
+  const analyticsDataset = uploadedData?.analyticsDataset || null;
+  const dashboardDataset = analyticsDataset?.dashboard || {};
+  const analyticsSourceLocked = Boolean(analyticsDataset);
+  const dashboardRows = dashboardDataset.rows || uploadedData?.rows || [];
+  const dashboardColumns = dashboardDataset.columns || uploadedData?.columns || [];
+  const dashboardCharts = dashboardDataset.charts || uploadedData?.charts || [];
+  const dashboardQuality = dashboardDataset.dataQuality || uploadedData?.dataQuality || { completeness: 0, quality: 0 };
+  const analyticsDashboardPlan = dashboardDataset.dashboardPlan || uploadedData?.dashboardPlan || uploadedData?.dashboard_plan || {};
+
+  // Collapsed states for Drill Down view
+  const [expandedCategories, setExpandedCategories] = useState({});
+  const [expandedProducts, setExpandedProducts] = useState({});
+  const [expandedCustomers, setExpandedCustomers] = useState({});
+
+  // Reset tab and filters when a new file is uploaded
+  useEffect(() => {
+    setActiveTab('overview');
+    setActiveFilters({});
+    setSearchQuery('');
+    setCurrentPage(1);
+    setExpandedCategories({});
+    setExpandedProducts({});
+    setExpandedCustomers({});
+  }, [uploadedData?.fileName]);
+
+  // Hook Ctrl+Shift+D for Developer Debug mode toggle
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        setDebugMode(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Pre-render Validation Engine warnings check
+  const validationWarnings = useMemo(() => {
+    if (!uploadedData) return [];
+    const warnings = [];
+    const dataQuality = dashboardQuality || { completeness: 100, quality: 100, duplicatesCount: 0 };
+    const anomalies = uploadedData.anomalies || [];
+    const rowCount = uploadedData.rowCount || 1;
+
+    if ((dataQuality.completeness || 100) < 60) {
+      warnings.push(`Low Data Completeness: Only ${dataQuality.completeness}% of cells are filled. Results may be statistically biased.`);
+    }
+
+    const dupCount = dataQuality.duplicatesCount || 0;
+    if (dupCount > 0 && rowCount > 0 && dupCount / rowCount > 0.15) {
+      warnings.push(`High Duplicate Rate: ${dupCount.toLocaleString()} duplicate records detected (${((dupCount / rowCount) * 100).toFixed(1)}% of rows).`);
+    }
+
+    const criticalAnomalies = anomalies.filter(a => a.severity === 'Critical').length;
+    const warningAnomalies = anomalies.filter(a => a.severity === 'Warning').length;
+    if (criticalAnomalies > 0 || warningAnomalies > Math.max(50, rowCount * 0.15)) {
+      warnings.push(`Review anomalies: ${criticalAnomalies} critical and ${warningAnomalies} warning-level groups detected.`);
+    }
+
+    return warnings;
+  }, [uploadedData, dashboardQuality]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      if (!uploadedData?.connectedSource) return;
+      const result = await refreshConnectedSource(uploadedData.connectedSource, uploadedData.sessionId);
+      if (result.clearActiveAnalysis || !result.valid) {
+        setUploadedData(null);
+        return;
+      }
+      if (result.analysis) {
+        setUploadedData({ ...result.analysis, sessionId: result.sessionId || result.analysis.sessionId });
+      }
+    } catch (error) {
+      console.warn('[Dashboard] connected source refresh failed:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (!filteredRows || filteredRows.length === 0) return;
+    setShowExportMenu(false);
+    
+    const headers = dashboardColumns;
+    const csvContent = [
+      headers.join(','),
+      ...filteredRows.map(row => 
+        headers.map(header => {
+          const val = String(row[header] ?? '').replace(/"/g, '""');
+          return (val.includes(',') || val.includes('\n') || val.includes('\r') || val.includes('"'))
+            ? `"${val}"` : val;
+        }).join(',')
+      )
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `dsi_export_${uploadedData.fileName || 'data.csv'}`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportExcel = () => {
+    if (!filteredRows || filteredRows.length === 0) return;
+    setShowExportMenu(false);
+    
+    const worksheet = XLSX.utils.json_to_sheet(filteredRows.map(r => {
+      const rest = { ...r };
+      delete rest._fileName;
+      return rest;
+    }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Data");
+    XLSX.writeFile(workbook, `dsi_export_${uploadedData.fileName || 'data'}.xlsx`);
+  };
+
+  const exportChartAsPNG = (chartId, fileName) => {
+    const chartContainer = document.getElementById(chartId);
+    const svgElement = chartContainer?.querySelector('svg');
+    if (!svgElement) return;
+
+    const svgString = new XMLSerializer().serializeToString(svgElement);
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const URL = window.URL || window.webkitURL || window;
+    const blobURL = URL.createObjectURL(svgBlob);
+    
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = svgElement.clientWidth * 2;
+      canvas.height = svgElement.clientHeight * 2;
+      const context = canvas.getContext('2d');
+      
+      context.fillStyle = '#ffffff'; 
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.scale(2, 2);
+      context.drawImage(image, 0, 0, svgElement.clientWidth, svgElement.clientHeight);
+      
+      const png = canvas.toDataURL('image/png');
+      const downloadLink = document.createElement('a');
+      downloadLink.href = png;
+      downloadLink.download = `${fileName}.png`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+    };
+    image.src = blobURL;
+  };
+
+  // Mappings are handled automatically by the smart detection engine
+
+  // Auto-filter columns â€” provided by the Analytics Engine in analyticsResult
+  const autoFilterColumns = useMemo(() => {
+    return uploadedData?.autoFilterColumns || [];
+  }, [uploadedData]);
+
+  // Compute filtered rows (includes search query match)
+  const filteredRows = useMemo(() => {
+    if (!uploadedData || !dashboardRows.length) return [];
+    return dashboardRows.filter(row => {
+      // 1. Matches filter select inputs
+      const matchFilters = Object.entries(activeFilters).every(([col, val]) => {
+        if (!val || val === '') return true;
+        return String(row[col] ?? '').trim() === val;
+      });
+
+      // 2. Matches search text queries
+      const matchSearch = searchQuery === '' || Object.values(row).some(cell =>
+        String(cell ?? '').toLowerCase().includes(searchQuery.toLowerCase())
+      );
+
+      return matchFilters && matchSearch;
+    });
+  }, [uploadedData, dashboardRows, activeFilters, searchQuery]);
+
+  // Metrics remain locked to the backend analytics dataset. Legacy browser-only
+  // uploads can still use the old local recompute path for backward compatibility.
+  const filteredKPIs = useMemo(() => {
+    if (analyticsSourceLocked) return dashboardDataset.kpis || uploadedData?.kpis || [];
+    if (!uploadedData || !uploadedData._kpiList) return uploadedData?.kpis || [];
+    return recomputeFilteredKPIs(filteredRows, uploadedData);
+  }, [analyticsSourceLocked, dashboardDataset.kpis, uploadedData, filteredRows]);
+
+  const activeKPIs = filteredKPIs;
+  const dashboardPlan = analyticsDashboardPlan;
+  const plannedSections = dashboardPlan.main_story_sections || [];
+  const plannedInsights = dashboardPlan.insights || [];
+  const skippedColumns = dashboardPlan.skipped_columns || [];
+  const dataSciencePlots = uploadedData?.dataScience?.visualizations?.plots || [];
+  const mappedCols = useMemo(
+    () => uploadedData?.columnRoles || uploadedData?.mappedCols || {},
+    [uploadedData?.columnRoles, uploadedData?.mappedCols]
+  );
+  const dataQuality = dashboardQuality;
+  const allAnomalies = useMemo(() => uploadedData?.anomalies || [], [uploadedData?.anomalies]);
+  const actionableAnomalies = useMemo(
+    () => allAnomalies.filter(a => getAnomalySeverity(a) !== 'Info'),
+    [allAnomalies]
+  );
+  const infoAnomalies = useMemo(
+    () => allAnomalies.filter(a => getAnomalySeverity(a) === 'Info'),
+    [allAnomalies]
+  );
+  const detectionConfidence = uploadedData?.detectionConfidence;
+  const businessSummary = uploadedData?.businessSummary;
+  const primaryTableProfile = useMemo(() => {
+    const profiles = uploadedData?.tableProfiles || [];
+    return profiles.find(profile => profile.name === uploadedData?.primaryTable) || profiles[0] || null;
+  }, [uploadedData?.tableProfiles, uploadedData?.primaryTable]);
+  const qualityAuditRows = useMemo(() => {
+    if (primaryTableProfile?.columns?.length) {
+      const total = primaryTableProfile.rowCount || uploadedData?.rowCount || 0;
+      return primaryTableProfile.columns.map(col => ({
+        role: col.role || '-',
+        name: col.name,
+        type: col.detectedType || 'unknown',
+        total,
+        populated: Math.max(0, total - (col.missingCount || 0)),
+        empty: col.missingCount || 0,
+        completeness: ((1 - (col.missingRate || 0)) * 100).toFixed(1),
+        unique: col.uniqueCount ?? 0,
+      }));
+    }
+
+    return Object.entries(mappedCols)
+      .filter(([, colName]) => colName)
+      .map(([role, colName]) => {
+        const total = uploadedData?.rows?.length || 0;
+        const filled = (uploadedData?.rows || []).filter(row => (
+          row[colName] !== undefined && row[colName] !== null && row[colName] !== ''
+        )).length;
+        return {
+          role,
+          name: colName,
+          type: 'mapped',
+          total,
+          populated: filled,
+          empty: total - filled,
+          completeness: total > 0 ? ((filled / total) * 100).toFixed(1) : '0.0',
+          unique: new Set((uploadedData?.rows || []).map(row => String(row[colName] ?? '').trim()).filter(Boolean)).size,
+        };
+      });
+  }, [primaryTableProfile, uploadedData?.rowCount, uploadedData?.rows, mappedCols]);
+  const visualCharts = useMemo(() => {
+    if (!businessSummary) {
+      return {
+        regions: [],
+        categories: [],
+        reps: [],
+        products: [],
+        payments: [],
+        categoryProfitability: [],
+        marginByCategory: [],
+      };
+    }
+
+    const profitability = businessSummary.categoryProfitability || [];
+    return {
+      regions: toValueChartData(businessSummary.regionWise),
+      categories: toValueChartData(businessSummary.categoryWise),
+      reps: toValueChartData(businessSummary.topSalesReps),
+      products: toValueChartData(businessSummary.topProducts),
+      payments: toValueChartData(businessSummary.paymentModes),
+      categoryProfitability: profitability.map(item => ({
+        name: item.name,
+        sales: Number(item.salesRaw || 0),
+        profit: Number(item.profitRaw || 0),
+        margin: Number(item.margin || 0),
+      })),
+      marginByCategory: profitability
+        .filter(item => item.margin !== null && item.margin !== undefined)
+        .map(item => ({ name: item.name, value: Number(item.margin || 0) })),
+    };
+  }, [businessSummary]);
+
+  const displayConfidence = useMemo(() => {
+    if (!detectionConfidence) return 0;
+    const conf = detectionConfidence;
+    return conf <= 1 ? parseFloat((conf * 100).toFixed(1)) : conf;
+  }, [detectionConfidence]);
+
+  const totalPages = Math.ceil((filteredRows || []).length / rowsPerPage);
+  const paginatedRows = (filteredRows || []).slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
+
+  // Filtered Anomaly logs
+  const filteredAnomalies = useMemo(() => {
+    return allAnomalies.filter(a => {
+      const severity = getAnomalySeverity(a);
+      if (anomalyFilter === 'All') return severity !== 'Info';
+      return severity === anomalyFilter;
+    });
+  }, [allAnomalies, anomalyFilter]);
+
+
+  const cleanNumber = (v) => {
+    if (v === null || v === undefined) return 0;
+    if (typeof v === 'number') return v;
+    const n = parseFloat(String(v).replace(/[^0-9.-]/g, ''));
+    return isNaN(n) ? 0 : n;
+  };
+
+  // Collapsible Categories tree grouped calculations
+  const drillDownCategories = useMemo(() => {
+    if (!uploadedData || !filteredRows.length) return [];
+    const catCol = mappedCols.category;
+    const prodCol = mappedCols.product;
+    const custCol = mappedCols.customer;
+    const metricCol = mappedCols.metric;
+
+    if (!catCol) return [];
+
+    const cats = {};
+    filteredRows.forEach(row => {
+      const cat = String(row[catCol] || 'Unknown');
+      const prod = prodCol ? String(row[prodCol] || 'Unknown Product') : 'All Products';
+      const cust = custCol ? String(row[custCol] || 'Anonymous Customer') : 'All Customers';
+      const val = metricCol ? cleanNumber(row[metricCol]) : 1;
+
+      if (!cats[cat]) cats[cat] = { name: cat, total: 0, products: {} };
+      cats[cat].total += val;
+
+      if (!cats[cat].products[prod]) cats[cat].products[prod] = { name: prod, total: 0, customers: {} };
+      cats[cat].products[prod].total += val;
+
+      if (!cats[cat].products[prod].customers[cust]) cats[cat].products[prod].customers[cust] = { name: cust, total: 0, rows: [] };
+      cats[cat].products[prod].customers[cust].total += val;
+      cats[cat].products[prod].customers[cust].rows.push(row);
+    });
+
+    return Object.values(cats).sort((a,b) => b.total - a.total);
+  }, [uploadedData, filteredRows, mappedCols]);
+
+
+
+  if (!uploadedData) {
+    return (
+      <div className="app-layout">
+        <Sidebar />
+        <main className="main-content">
+          <div className="page-header">
+            <div>
+              <h1 className="page-title">Analysis Workspace</h1>
+              <p className="page-subtitle">No active analysis session is loaded.</p>
+            </div>
+          </div>
+
+          <div className="empty-workspace-card">
+            <FileSpreadsheet size={30} color="var(--blue-600)" />
+            <h2>Start with a new upload</h2>
+            <p>Page 2 only shows results from the current uploaded file. Upload a dataset to create a fresh isolated analysis session.</p>
+            <Link to="/upload">
+              <button className="btn-primary">Upload Dataset</button>
+            </Link>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Removed mapping editor render card
+
+  // â”€â”€ Tab Renderers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  return (
+    <div className="app-layout">
+      <Sidebar />
+      <main className="main-content">
+
+        {/* Live Mapped Status Banner */}
+        <div className="data-banner">
+          <FileSpreadsheet size={15} />
+          <span>Dataset Mapped:</span>
+          <span className="data-banner-file">{uploadedData.fileName}</span>
+          <span className="data-banner-meta">
+            Â· {uploadedData.datasetType} ({displayConfidence}% Conf.) Â· {(uploadedData.rowCount ?? 0).toLocaleString()} rows Â· Quality Score: {dataQuality.quality}%
+          </span>
+          {uploadedData.sourceProvenance && (
+            <span
+              className="data-banner-meta"
+              title={`SHA-256: ${uploadedData.sourceProvenance.sha256}`}
+            >
+              | Source: {uploadedData.sourceProvenance.kind === 'manual_upload' ? 'Manual upload' : 'Connected tool'}
+              {' '}| Verified: {uploadedData.sourceProvenance.sha256.slice(0, 10)}
+            </span>
+          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button
+              className="btn-outline"
+              style={{
+                fontSize: 11,
+                padding: '4px 10px',
+                gap: 4,
+                color: debugMode ? 'var(--blue-400)' : 'var(--text-secondary)',
+                borderColor: debugMode ? 'var(--blue-400)' : 'var(--border-subtle)',
+                background: debugMode ? 'rgba(59,130,246,0.06)' : 'transparent'
+              }}
+              onClick={() => setDebugMode(prev => !prev)}
+            >
+              <Settings size={12} />
+              Developer Panel
+            </button>
+            <button className="btn-outline" style={{ fontSize: 11, padding: '4px 10px', gap: 4, color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.3)' }} onClick={() => setUploadedData(null)}>
+              Change file
+            </button>
+          </div>
+        </div>
+
+        {/* Validation Engine Warnings Banner (Fix #9) */}
+        {validationWarnings.length > 0 && (
+          <div className="validation-banner">
+            <AlertTriangle size={18} color="#fbbf24" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div className="validation-banner-content">
+              <div className="validation-banner-title">Validation Engine Warning Report</div>
+              <ul className="validation-banner-list">
+                {validationWarnings.map((warn, index) => (
+                  <li key={index}>{warn}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {/* Dashboard Header */}
+        <div className="page-header" style={{ marginBottom: 20 }}>
+          <div>
+            <h1 className="page-title">{uploadedData.fileName} Dashboard</h1>
+            <p className="page-subtitle">Interactive Tableau + Power BI local calculations platform</p>
+          </div>
+          <div className="page-actions">
+            <button className="btn-outline" onClick={handleRefresh} style={{ gap: 6 }}>
+              <RefreshCw size={14} style={{ animation: refreshing ? 'spin 0.7s linear infinite' : 'none' }} />
+              Refresh
+            </button>
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+              <button
+                className="btn-outline"
+                style={{ gap: 6 }}
+                id="btn-export-dropdown"
+                onClick={() => setShowExportMenu(v => !v)}
+              >
+                <Download size={14} /> Export Options
+              </button>
+              <div className="export-menu" style={{
+                display: showExportMenu ? 'flex' : 'none',
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                right: 0,
+                zIndex: 30,
+                minWidth: 190,
+                flexDirection: 'column',
+                gap: 4,
+                padding: 8,
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 8,
+                boxShadow: '0 16px 40px rgba(0,0,0,0.35)'
+              }}>
+                <button onClick={handleExportExcel}>Excel Workbook</button>
+                <button onClick={handleExportCSV}>CSV File</button>
+                <button onClick={() => { setShowExportMenu(false); setSecureDialogMode('pdf'); }}>Password-protected PDF</button>
+              </div>
+            </div>
+            <button className="btn-primary" style={{ gap: 6 }} onClick={() => setSecureDialogMode('share')}>
+              <Share2 size={14} /> Secure Share
+            </button>
+          </div>
+        </div>
+
+        {/* Tab Buttons bar */}
+        <div style={{ display: 'flex', gap: 12, borderBottom: '1px solid var(--border-subtle)', marginBottom: 24, paddingBottom: 1 }}>
+          {[
+            { id: 'overview', label: 'Overview Dashboard', icon: BarChart2 },
+            { id: 'visuals', label: 'Visual Insights', icon: Activity },
+            { id: 'quality', label: 'Data Quality Summary', icon: Activity },
+            { id: 'drilldown', label: 'Collapsible Drill Down', icon: Target },
+            { id: 'anomalies', label: `Anomaly Log (${actionableAnomalies.length})`, icon: AlertTriangle },
+          ].map(t => (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '10px 16px',
+                background: activeTab === t.id ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
+                color: activeTab === t.id ? 'var(--blue-400)' : 'var(--text-secondary)',
+                borderBottom: activeTab === t.id ? '2px solid var(--blue-400)' : 'none',
+                fontWeight: activeTab === t.id ? 700 : 500,
+                fontSize: 13,
+                borderTopLeftRadius: 6,
+                borderTopRightRadius: 6,
+                cursor: 'pointer',
+                transition: 'var(--transition)'
+              }}
+            >
+              <t.icon size={15} />
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Dynamic Global Filters (Overview & Drilldown only) */}
+        {(activeTab === 'overview' || activeTab === 'drilldown') && (
+          <div className="chart-card" style={{ padding: '16px 20px', marginBottom: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 700, color: 'var(--blue-400)', marginRight: 16 }}>
+                <Filter size={15} />
+                Filters
+              </div>
+              <div style={{ display: 'flex', gap: 10, flex: 1, minWidth: 200 }}>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search records..."
+                  style={{
+                    background: 'var(--bg-base)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 6,
+                    padding: '6px 12px',
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                    flex: 1
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                {(autoFilterColumns || []).slice(0, 4).map(f => (
+                  <select
+                    key={f.column}
+                    value={activeFilters[f.column] || ''}
+                    onChange={(e) => setActiveFilters(prev => ({ ...prev, [f.column]: e.target.value }))}
+                    style={{
+                      background: 'var(--bg-base)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: 6,
+                      padding: '6px 12px',
+                      color: 'var(--text-primary)',
+                      fontSize: 13,
+                      minWidth: 130
+                    }}
+                  >
+                    <option value="">{f.column}</option>
+                    {f.values.map(val => (
+                      <option key={val} value={val}>{val}</option>
+                    ))}
+                  </select>
+                ))}
+                {(Object.keys(activeFilters).some(k => activeFilters[k]) || searchQuery) && (
+                  <button
+                    className="btn-outline"
+                    onClick={() => { setActiveFilters({}); setSearchQuery(''); }}
+                    style={{ fontSize: 11, padding: '4px 10px', height: 32, borderColor: 'var(--danger)', color: 'var(--danger)' }}
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* â”€â”€ TAB CONTENT: OVERVIEW DASHBOARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {activeTab === 'overview' && (
+          <div className="animate-fadeIn">
+            {/* Dataset Overview Card (Fix #5) */}
+            <div className="dataset-overview-grid">
+              <div className="dataset-overview-item">
+                <span className="dataset-overview-label">Dataset Type</span>
+                <span className="dataset-overview-val">{uploadedData.datasetType}</span>
+              </div>
+              <div className="dataset-overview-item">
+                <span className="dataset-overview-label">Mapping Confidence</span>
+                <span className="dataset-overview-val" style={{ color: displayConfidence > 92 ? 'var(--success)' : 'var(--warning)' }}>
+                  {displayConfidence}%
+                </span>
+              </div>
+              <div className="dataset-overview-item">
+                <span className="dataset-overview-label">Total Rows</span>
+                <span className="dataset-overview-val">{uploadedData.rowCount?.toLocaleString()}</span>
+              </div>
+              <div className="dataset-overview-item">
+                <span className="dataset-overview-label">Total Columns</span>
+                <span className="dataset-overview-val">{uploadedData.colCount}</span>
+              </div>
+              <div className="dataset-overview-item">
+                <span className="dataset-overview-label">Duplicate Rows</span>
+                <span className="dataset-overview-val">{dataQuality.duplicatesCount || 0}</span>
+              </div>
+              <div className="dataset-overview-item">
+                <span className="dataset-overview-label">Missing Values %</span>
+                <span className="dataset-overview-val">{(100 - dataQuality.completeness).toFixed(1)}%</span>
+              </div>
+              <div className="dataset-overview-item">
+                <span className="dataset-overview-label">Statistical Highlights</span>
+                <span className="dataset-overview-val">{dataQuality.outliersCount || 0}</span>
+              </div>
+              <div className="dataset-overview-item">
+                <span className="dataset-overview-label">Quality Score</span>
+                <span className="dataset-overview-val" style={{ color: dataQuality.quality > 80 ? 'var(--success)' : 'var(--warning)' }}>
+                  {dataQuality.quality}/100
+                </span>
+              </div>
+            </div>
+
+            {/* dynamic KPIs with Explainability report hover tooltips */}
+            <div className="kpi-grid">
+              {activeKPIs.map((kpi, i) => {
+                const IconComponent = ICON_MAP[kpi.label] || BarChart2;
+                const iconBg = ICON_BKGS[kpi.label] || 'rgba(59,130,246,0.1)';
+                return (
+                  <KPICard
+                    key={kpi.label}
+                    label={kpi.label}
+                    value={kpi.value}
+                    desc={kpi.desc}
+                    trend={kpi.trend || 'neutral'}
+                    trendValue={kpi.trendValue || 'N/A'}
+                    icon={IconComponent}
+                    iconBg={iconBg}
+                    index={i}
+                    explainability={kpi.explainability}
+                  />
+                );
+              })}
+            </div>
+
+            {(plannedSections.length > 0 || plannedInsights.length > 0 || skippedColumns.length > 0) && (
+              <div className="report-section animate-fadeInUp" style={{ marginBottom: 24 }}>
+                <div className="report-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Target size={18} color="var(--blue-400)" />
+                  Adaptive Dashboard Story Plan
+                </div>
+
+                {plannedSections.length > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 }}>
+                    {plannedSections.map(section => (
+                      <div key={section.id} style={{ padding: '14px 16px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--text-primary)', marginBottom: 6 }}>{section.title}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{section.reason}</div>
+                        {section.sourceColumns?.length > 0 && (
+                          <div style={{ fontSize: 10, color: 'var(--blue-400)', marginTop: 8 }}>
+                            Source: {section.sourceColumns.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {plannedInsights.length > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14 }}>
+                    {plannedInsights.slice(0, 4).map((insight, i) => (
+                      <div key={`${insight.type}-${i}`} style={{ padding: 16, background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 900, marginBottom: 6 }}>
+                          Priority Insight · {insight.confidence || 'Medium'} confidence
+                        </div>
+                        <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 800, marginBottom: 8 }}>{insight.observation}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{insight.evidence}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {skippedColumns.length > 0 && (
+                  <div style={{ marginTop: 16, padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-secondary)', fontSize: 12 }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>{skippedColumns.length} columns skipped from KPI cards</strong>
+                    <span> because they look like IDs, encoded categories, contact fields, high-cardinality text, or insufficient data.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === '__legacy_summary' && businessSummary && (
+              <div className="report-section animate-fadeInUp" style={{ marginBottom: 24 }}>
+                <div className="report-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Target size={18} color="var(--blue-400)" />
+                  Adaptive Data Summary ({businessSummary.salesLabel})
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
+                  {activeKPIs.slice(0, 4).map((kpi) => (
+                    <div key={kpi.label} style={{ padding: '14px 16px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 800, marginBottom: 6 }}>{kpi.label}</div>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: 'var(--text-primary)' }}>{kpi.value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
+                  <SummaryList title={`Segment breakdown${mappedCols.category ? ` by ${mappedCols.category}` : ''}`} items={businessSummary.categoryWise} />
+                  <SummaryList title={`Count distribution${mappedCols.category ? ` by ${mappedCols.category}` : ''}`} items={businessSummary.paymentModes} mode="count" />
+                </div>
+              </div>
+            )}
+
+            {/* Dynamic Local/AI Executive Summary */}
+            {uploadedData.summary && (
+              <div className="report-hero animate-fadeInUp" style={{ padding: '20px 24px', marginBottom: 24 }}>
+                <div className="report-meta" style={{ marginBottom: 8 }}>
+                  <span className="badge badge-blue"><Sparkles size={11} /> Executive Summary</span>
+                </div>
+                <p
+                  style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}
+                  dangerouslySetInnerHTML={{
+                    __html: uploadedData.summary
+                      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Planner-selected dashboard charts */}
+            {(dashboardCharts || []).length > 0 && (
+              <div className="chart-grid">
+                {(dashboardCharts || []).slice(0, 4).map((chart, chartIndex) => (
+                  <UniversalChart key={chart.id || chart.title || chartIndex} chart={chart} index={chartIndex} />
+                ))}
+              </div>
+            )}
+
+            {(dashboardCharts || []).length === 0 && (
+              <div className="chart-card" style={{ padding: 28, marginBottom: 24, color: 'var(--text-secondary)', textAlign: 'center' }}>
+                No meaningful dashboard chart was selected because the dataset does not contain enough valid measures, dimensions, targets, or time columns.
+              </div>
+            )}
+
+
+            {/* Paginated Data Preview Grid */}
+            <div className="data-table-card">
+              <div className="data-table-header">
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>Filtered Records Preview</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                    Showing {Math.min(filteredRows.length, (currentPage - 1) * rowsPerPage + 1)} to {Math.min(filteredRows.length, currentPage * rowsPerPage)} of {filteredRows.length.toLocaleString()} rows
+                  </div>
+                </div>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      {(dashboardColumns || []).slice(0, 7).map(c => <th key={c}>{c}</th>)}
+                      {(dashboardColumns || []).length > 7 && <th>+{(dashboardColumns || []).length - 7} more</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedRows.map((row, i) => (
+                      <tr key={i}>
+                        {(dashboardColumns || []).slice(0, 7).map((c, j) => (
+                          <td key={c} style={j === 0 ? { fontWeight: 600, color: 'var(--text-primary)' } : {}}>
+                            {String(row[c] ?? 'â€”').slice(0, 24)}
+                          </td>
+                        ))}
+                        {dashboardColumns.length > 7 && <td style={{ color: 'var(--text-muted)' }}>â€¦</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {totalPages > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 12, borderTop: '1px solid var(--border-subtle)' }}>
+                  <button
+                    className="btn-outline"
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    style={{ padding: '6px 12px', opacity: currentPage === 1 ? 0.5 : 1, cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+                  >
+                    <ChevronLeft size={16} /> Prev
+                  </button>
+                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                    Page <strong>{currentPage}</strong> of <strong>{totalPages}</strong>
+                  </span>
+                  <button
+                    className="btn-outline"
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    style={{ padding: '6px 12px', opacity: currentPage === totalPages ? 0.5 : 1, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* â”€â”€ TAB CONTENT: VISUAL INSIGHTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {activeTab === 'visuals' && (
+          <div className="animate-fadeIn">
+            {(dashboardCharts || []).length === 0 && dataSciencePlots.length === 0 ? (
+              <div className="chart-card" style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+                No statistically supported charts were generated for this dataset.
+              </div>
+            ) : (
+              <>
+                <div className="report-section animate-fadeInUp" style={{ marginBottom: 24 }}>
+                  <div className="report-section-title">
+                    <BarChart2 size={18} color="var(--blue-400)" />
+                    Auto-generated Visual Dashboard
+                  </div>
+                  <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.6 }}>
+                    Charts below are rendered only when supported by detected data types and calculated evidence.
+                  </p>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 20 }}>
+                  {(dashboardCharts || []).map((chart, chartIndex) => (
+                    <UniversalChart key={chart.id || chart.title || chartIndex} chart={chart} index={chartIndex} />
+                  ))}
+                </div>
+                {dataSciencePlots.length > 0 && (
+                  <div className="animate-fadeInUp" style={{ marginTop: 24 }}>
+                    <div className="report-section-title" style={{ marginBottom: 16 }}>
+                      <Sparkles size={18} color="var(--blue-400)" />
+                      AI Data Scientist Visual EDA
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: 20 }}>
+                      {dataSciencePlots.map((plot, plotIndex) => (
+                        <div key={plot.id || plot.title || plotIndex} className="chart-card">
+                          <div className="chart-card-header">
+                            <div>
+                              <div className="chart-card-title">{plot.title}</div>
+                              <div className="chart-card-subtitle">{plot.reason}</div>
+                            </div>
+                          </div>
+                          <img
+                            src={plot.image}
+                            alt={plot.title}
+                            style={{ width: '100%', borderRadius: 8, border: '1px solid var(--border-subtle)', background: '#fff' }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === '__legacy_visuals' && (
+          <div className="animate-fadeIn">
+            {!businessSummary ? (
+              <div className="chart-card" style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+                Visual insights require mapped sales or profit columns in the uploaded dataset.
+              </div>
+            ) : (
+              <>
+                <div className="report-section animate-fadeInUp" style={{ marginBottom: 24 }}>
+                  <div className="report-section-title">
+                    <BarChart2 size={18} color="var(--blue-400)" />
+                    Visual Insights ({businessSummary.salesLabel})
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+                    {[
+                      ['Top Region', visualCharts.regions[0]?.name || 'N/A', visualCharts.regions[0]?.label || ''],
+                      ['Top Category', visualCharts.categories[0]?.name || 'N/A', visualCharts.categories[0]?.label || ''],
+                      ['Top Product', visualCharts.products[0]?.name || 'N/A', visualCharts.products[0]?.label || ''],
+                      ['Top Payment Mode', visualCharts.payments[0]?.name || 'N/A', visualCharts.payments[0]?.label || ''],
+                    ].map(([label, name, value]) => (
+                      <div key={label} style={{ padding: '14px 16px', background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8 }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 800, marginBottom: 6 }}>{label}</div>
+                        <div style={{ fontSize: 15, fontWeight: 900, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+                        <div style={{ fontSize: 12, color: 'var(--blue-400)', marginTop: 3 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 20, marginBottom: 24 }}>
+                  <VisualChartCard
+                    id="visual-region-sales"
+                    title={`Region-wise ${businessSummary.salesLabel}`}
+                    subtitle="Geographic revenue concentration"
+                    onExport={(chartId) => exportChartAsPNG(chartId, `${uploadedData.fileName}_${chartId}`)}
+                  >
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={visualCharts.regions} margin={{ top: 8, right: 12, left: 0, bottom: 28 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                        <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" height={54} />
+                        <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatShortNumber} />
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [formatCurrencyTooltip(value), businessSummary.salesLabel]} />
+                        <Bar dataKey="value" name={businessSummary.salesLabel} fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </VisualChartCard>
+
+                  <VisualChartCard
+                    id="visual-category-sales"
+                    title={`Category-wise ${businessSummary.salesLabel}`}
+                    subtitle="Category contribution ranking"
+                    onExport={(chartId) => exportChartAsPNG(chartId, `${uploadedData.fileName}_${chartId}`)}
+                  >
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={visualCharts.categories} margin={{ top: 8, right: 12, left: 0, bottom: 36 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                        <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" height={62} />
+                        <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatShortNumber} />
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [formatCurrencyTooltip(value), businessSummary.salesLabel]} />
+                        <Bar dataKey="value" name={businessSummary.salesLabel} fill="#22c55e" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </VisualChartCard>
+
+                  <VisualChartCard
+                    id="visual-top-products"
+                    title="Top Products by Sales"
+                    subtitle="Best-selling products by exact sales total"
+                    onExport={(chartId) => exportChartAsPNG(chartId, `${uploadedData.fileName}_${chartId}`)}
+                  >
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart layout="vertical" data={visualCharts.products} margin={{ top: 8, right: 12, left: 34, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                        <XAxis type="number" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatShortNumber} />
+                        <YAxis type="category" dataKey="name" width={110} tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [formatCurrencyTooltip(value), businessSummary.salesLabel]} />
+                        <Bar dataKey="value" name={businessSummary.salesLabel} fill="#f59e0b" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </VisualChartCard>
+
+                  <VisualChartCard
+                    id="visual-sales-reps"
+                    title="Top Sales Reps"
+                    subtitle="Sales rep contribution"
+                    onExport={(chartId) => exportChartAsPNG(chartId, `${uploadedData.fileName}_${chartId}`)}
+                  >
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart layout="vertical" data={visualCharts.reps} margin={{ top: 8, right: 12, left: 34, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                        <XAxis type="number" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatShortNumber} />
+                        <YAxis type="category" dataKey="name" width={112} tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [formatCurrencyTooltip(value), businessSummary.salesLabel]} />
+                        <Bar dataKey="value" name={businessSummary.salesLabel} fill="#14b8a6" radius={[0, 4, 4, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </VisualChartCard>
+
+                  <VisualChartCard
+                    id="visual-payment-mode"
+                    title="Payment Mode Popularity"
+                    subtitle="Order count distribution"
+                    onExport={(chartId) => exportChartAsPNG(chartId, `${uploadedData.fileName}_${chartId}`)}
+                  >
+                    <ResponsiveContainer width="100%" height={300}>
+                      <PieChart>
+                        <Pie data={visualCharts.payments} dataKey="value" nameKey="name" innerRadius={58} outerRadius={92} paddingAngle={2}>
+                          {visualCharts.payments.map((entry, index) => (
+                            <Cell key={entry.name} fill={VISUAL_COLORS[index % VISUAL_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [`${Number(value || 0).toLocaleString('en-IN')} orders`, 'Orders']} />
+                        <Legend verticalAlign="bottom" height={44} wrapperStyle={{ fontSize: 11 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </VisualChartCard>
+
+                  {visualCharts.categoryProfitability.length > 0 && (
+                    <VisualChartCard
+                      id="visual-category-profitability"
+                      title="Category Sales vs Profit"
+                      subtitle="Profit contribution beside revenue"
+                      onExport={(chartId) => exportChartAsPNG(chartId, `${uploadedData.fileName}_${chartId}`)}
+                    >
+                      <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={visualCharts.categoryProfitability} margin={{ top: 8, right: 12, left: 0, bottom: 36 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                          <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" height={62} />
+                          <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={formatShortNumber} />
+                          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value, name) => [formatCurrencyTooltip(value), name]} />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          <Bar dataKey="sales" name={businessSummary.salesLabel} fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="profit" name="Profit" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </VisualChartCard>
+                  )}
+
+                  {visualCharts.marginByCategory.length > 0 && (
+                    <VisualChartCard
+                      id="visual-category-margin"
+                      title="Profit Margin by Category"
+                      subtitle="Hidden profitability signal"
+                      onExport={(chartId) => exportChartAsPNG(chartId, `${uploadedData.fileName}_${chartId}`)}
+                    >
+                      <ResponsiveContainer width="100%" height={300}>
+                        <BarChart data={visualCharts.marginByCategory} margin={{ top: 8, right: 12, left: 0, bottom: 36 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                          <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" height={62} />
+                          <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(value) => `${Number(value).toFixed(0)}%`} />
+                          <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(value) => [`${Number(value || 0).toFixed(1)}%`, 'Profit Margin']} />
+                          <Bar dataKey="value" name="Profit Margin" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </VisualChartCard>
+                  )}
+                </div>
+
+                {(dashboardCharts || []).length > 0 && (
+                  <div className="animate-fadeInUp" style={{ marginTop: 24 }}>
+                    <div className="report-section-title" style={{ marginBottom: 16 }}>
+                      <Activity size={18} color="var(--blue-400)" />
+                      Auto-generated Charts
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 20 }}>
+                      {(dashboardCharts || []).slice(0, 8).map((chart, chartIndex) => (
+                        <UniversalChart key={chart.id || chart.title || chartIndex} chart={chart} index={chartIndex} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* â”€â”€ TAB CONTENT: DATA QUALITY DASHBOARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {activeTab === 'quality' && (
+          <div className="animate-fadeIn">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+              {/* Circular gauges card */}
+              <div className="chart-card" style={{ display: 'flex', flexDirection: 'column', gap: 16, justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+                <div style={{ display: 'flex', gap: 40, width: '100%', justifyContent: 'center' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ position: 'relative', width: 120, height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="120" height="120" viewBox="0 0 120 120">
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="8" />
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="var(--blue-400)" strokeWidth="8" strokeDasharray="314" strokeDashoffset={314 - (314 * dataQuality.completeness) / 100} transform="rotate(-90 60 60)" />
+                      </svg>
+                      <div style={{ position: 'absolute', fontSize: 20, fontWeight: 900 }}>{dataQuality.completeness}%</div>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginTop: 10, color: 'var(--text-secondary)' }}>Completeness Rate</div>
+                  </div>
+
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ position: 'relative', width: 120, height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="120" height="120" viewBox="0 0 120 120">
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="8" />
+                        <circle cx="60" cy="60" r="50" fill="none" stroke={dataQuality.quality > 90 ? 'var(--success)' : dataQuality.quality > 70 ? 'var(--warning)' : 'var(--danger)'} strokeWidth="8" strokeDasharray="314" strokeDashoffset={314 - (314 * dataQuality.quality) / 100} transform="rotate(-90 60 60)" />
+                      </svg>
+                      <div style={{ position: 'absolute', fontSize: 20, fontWeight: 900 }}>{dataQuality.quality}%</div>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginTop: 10, color: 'var(--text-secondary)' }}>Data Quality Score</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Counters box */}
+              <div className="chart-card" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {[
+                  { label: 'Missing Cells', val: dataQuality.emptyCount, c: dataQuality.emptyCount > 0 ? 'var(--warning)' : 'var(--text-muted)' },
+                  { label: 'Duplicate Rows', val: dataQuality.duplicatesCount, c: dataQuality.duplicatesCount > 0 ? 'var(--warning)' : 'var(--text-muted)' },
+                  { label: 'Invalid Date cells', val: dataQuality.invalidDates, c: dataQuality.invalidDates > 0 ? 'var(--danger)' : 'var(--text-muted)' },
+                  { label: 'Invalid Values', val: dataQuality.invalidValueCount || dataQuality.invalidDates || 0, c: (dataQuality.invalidValueCount || dataQuality.invalidDates || 0) > 0 ? 'var(--danger)' : 'var(--text-muted)' },
+                  { label: 'Negative Numeric Values', val: dataQuality.negativeValues || 0, c: (dataQuality.negativeValues || 0) > 0 ? 'var(--danger)' : 'var(--text-muted)' },
+                  { label: 'Zero Numeric Values', val: dataQuality.zeroValues || 0, c: (dataQuality.zeroValues || 0) > 0 ? '#fbbf24' : 'var(--text-muted)' },
+                  { label: 'Outlier Values', val: dataQuality.outliersCount, c: dataQuality.outliersCount > 0 ? 'var(--blue-400)' : 'var(--text-muted)' }
+                ].map((item, idx) => (
+                  <div key={idx} style={{ background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '12px 16px' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>{item.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: item.val > 0 ? item.c : 'var(--text-primary)', marginTop: 4 }}>
+                      {(item.val ?? 0).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Quality Audit Grid */}
+            <div className="data-table-card">
+              <div className="data-table-header">
+                <div style={{ fontWeight: 700, fontSize: 15 }}>Column Profiling & Completeness Audit</div>
+              </div>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Mapped Role</th>
+                    <th>Column</th>
+                    <th>Detected Type</th>
+                    <th>Row Count</th>
+                    <th>Populated Cells</th>
+                    <th>Empty Cells</th>
+                    <th>Unique Values</th>
+                    <th>Completeness %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qualityAuditRows.map((row) => (
+                    <tr key={`${row.role}-${row.name}`}>
+                      <td style={{ textTransform: 'capitalize', fontWeight: 600, color: row.role === '-' ? 'var(--text-muted)' : 'var(--blue-400)' }}>{row.role}</td>
+                      <td><strong>{row.name}</strong></td>
+                      <td style={{ textTransform: 'capitalize' }}>{row.type}</td>
+                      <td>{row.total.toLocaleString()}</td>
+                      <td>{row.populated.toLocaleString()}</td>
+                      <td>{row.empty.toLocaleString()}</td>
+                      <td>{row.unique.toLocaleString()}</td>
+                      <td>
+                        <span style={{ color: parseFloat(row.completeness) > 95 ? 'var(--success)' : parseFloat(row.completeness) > 80 ? 'var(--warning)' : 'var(--danger)' }}>
+                          {row.completeness}%
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* â”€â”€ TAB CONTENT: COLLAPSIBLE DRILL DOWN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {activeTab === 'drilldown' && (
+          <div className="animate-fadeIn chart-card" style={{ padding: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, fontWeight: 700, color: 'var(--blue-400)', marginBottom: 20 }}>
+              <Target size={16} />
+              Interactive Hierarchy Drill Down
+            </div>
+
+            {!mappedCols.category ? (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-secondary)' }}>
+                Drill down requires at least one detected categorical segment column.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {drillDownCategories.map(cat => {
+                  const isCatExpanded = !!expandedCategories[cat.name];
+                  return (
+                    <div key={cat.name} style={{ background: 'var(--bg-glass-light)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'hidden' }}>
+                      {/* Level 1: Category */}
+                      <div
+                        onClick={() => setExpandedCategories(prev => ({ ...prev, [cat.name]: !prev[cat.name] }))}
+                        style={{ display: 'flex', alignItems: 'center', justifyBetween: 'space-between', padding: '14px 20px', cursor: 'pointer', background: 'rgba(255,255,255,0.01)' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                          {isCatExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                          <span style={{ fontSize: 14, fontWeight: 700 }}>Segment: {cat.name}</span>
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--blue-400)' }}>
+                          {uploadedData.currencySymbol}{Math.round(cat.total).toLocaleString()}
+                        </span>
+                      </div>
+
+                      {/* Level 2: Product */}
+                      {isCatExpanded && (
+                        <div style={{ padding: '4px 20px 12px 36px', display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--border-subtle)' }}>
+                          {Object.values(cat.products).map(prod => {
+                            const prodKey = `${cat.name}_${prod.name}`;
+                            const isProdExpanded = !!expandedProducts[prodKey];
+                            return (
+                              <div key={prod.name} style={{ borderLeft: '1px solid var(--border-subtle)', paddingLeft: 12 }}>
+                                <div
+                                  onClick={() => setExpandedProducts(prev => ({ ...prev, [prodKey]: !prev[prodKey] }))}
+                                  style={{ display: 'flex', alignItems: 'center', padding: '8px 0', cursor: 'pointer' }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                                    {isProdExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                    <span style={{ fontSize: 13, fontWeight: 600 }}>Sub-segment: {prod.name}</span>
+                                  </div>
+                                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                    {uploadedData.currencySymbol}{Math.round(prod.total).toLocaleString()}
+                                  </span>
+                                </div>
+
+                                {/* Level 3: Customer */}
+                                {isProdExpanded && (
+                                  <div style={{ paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    {Object.values(prod.customers).map(cust => {
+                                      const custKey = `${prodKey}_${cust.name}`;
+                                      const isCustExpanded = !!expandedCustomers[custKey];
+                                      return (
+                                        <div key={cust.name} style={{ borderLeft: '1px dotted var(--border-subtle)', paddingLeft: 12 }}>
+                                          <div
+                                            onClick={() => setExpandedCustomers(prev => ({ ...prev, [custKey]: !prev[custKey] }))}
+                                            style={{ display: 'flex', alignItems: 'center', padding: '6px 0', cursor: 'pointer' }}
+                                          >
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                                              {isCustExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Detail: {cust.name}</span>
+                                            </div>
+                                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                              ({cust.rows.length} records) - {Math.round(cust.total).toLocaleString()}
+                                            </span>
+                                          </div>
+
+                                          {/* Level 4: Individual Transaction details */}
+                                          {isCustExpanded && (
+                                            <div style={{ background: 'var(--bg-base)', padding: 10, borderRadius: 6, marginTop: 4, overflowX: 'auto' }}>
+                                              <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                                                <thead>
+                                                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                                                    {(dashboardColumns || []).slice(0, 5).map(h => (
+                                                      <th key={h} style={{ textAlign: 'left', padding: '4px 8px' }}>{h}</th>
+                                                    ))}
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {cust.rows.map((r, i) => (
+                                                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                                      {(dashboardColumns || []).slice(0, 5).map(h => (
+                                                        <td key={h} style={{ padding: '4px 8px' }}>{String(r[h] ?? '')}</td>
+                                                      ))}
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* â”€â”€ TAB CONTENT: ANOMALY TABLE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {activeTab === 'anomalies' && (
+          <div className="animate-fadeIn">
+            {/* Filter buttons */}
+            <div className="chart-card" style={{ padding: '16px 20px', marginBottom: 20, display: 'flex', alignItems: 'center', justifyBetween: 'space-between', gap: 16 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['All', 'Critical', 'Warning', 'Info'].map(level => (
+                  <button
+                    key={level}
+                    onClick={() => setAnomalyFilter(level)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 999,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      background: anomalyFilter === level ? 'var(--blue-600)' : 'var(--bg-glass-light)',
+                      border: '1px solid var(--border-subtle)',
+                      color: anomalyFilter === level ? 'white' : 'var(--text-secondary)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {level === 'All' ? 'Actionable' : level}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--text-muted)' }}>
+                {anomalyFilter === 'All'
+                  ? `Found ${filteredAnomalies.length} actionable anomalies`
+                  : `Found ${filteredAnomalies.length} ${anomalyFilter.toLowerCase()} records`}
+                {anomalyFilter === 'All' && infoAnomalies.length > 0 && (
+                  <span style={{ marginLeft: 10, color: 'var(--blue-400)' }}>
+                    {infoAnomalies.length} info highlights in Info filter
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Table */}
+            <div className="data-table-card">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Severity</th>
+                    <th>Anomaly Mapped Type</th>
+                    <th>Audit Description Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAnomalies.length === 0 ? (
+                    <tr>
+                      <td colSpan="3" style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+                        {anomalyFilter === 'All'
+                          ? `No critical or warning anomalies found. ${infoAnomalies.length} high-value informational highlights are available in the Info filter.`
+                          : 'No data anomalies matching active filter level.'}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAnomalies.map((anom, index) => {
+                      const severity = getAnomalySeverity(anom);
+                      const type = typeof anom === 'string' ? 'Validation finding' : (anom.type || 'Statistical finding');
+                      const description = typeof anom === 'string' ? anom : (anom.description || 'No description available.');
+                      return (
+                        <tr key={anom.id || `${severity}-${index}`}>
+                          <td>
+                            <span className={`badge ${severity === 'Critical' ? 'badge-red' : severity === 'Warning' ? 'badge-yellow' : 'badge-blue'}`}>
+                              {severity}
+                            </span>
+                          </td>
+                          <td><strong>{type}</strong></td>
+                          <td style={{ color: 'var(--text-secondary)' }}>{description}</td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Developer Debug Mode Panel (Fix #8) */}
+        {debugMode && (
+          <div className="debug-panel animate-fadeIn">
+            <div className="debug-panel-header">
+              <span className="debug-panel-title">Developer Intelligence Panel</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Hotkey: Ctrl + Shift + D</span>
+            </div>
+            <div className="debug-panel-grid">
+              <div>
+                <div className="debug-box-title">Schema Roles & Mappings</div>
+                <div className="debug-box">
+                  {JSON.stringify(uploadedData.columnRoles || {}, null, 2)}
+                </div>
+              </div>
+              <div>
+                <div className="debug-box-title">Validation Engine Output</div>
+                <div className="debug-box">
+                  {JSON.stringify(uploadedData.validationReport || {}, null, 2)}
+                </div>
+              </div>
+              <div>
+                <div className="debug-box-title">Data Profiler Metrics</div>
+                <div className="debug-box">
+                  {JSON.stringify(dataQuality || {}, null, 2)}
+                </div>
+              </div>
+              <div>
+                <div className="debug-box-title font-mono">Telemetry & Model Context</div>
+                <div className="debug-box">
+                  {JSON.stringify({
+                    fileName: uploadedData.fileName,
+                    datasetType: uploadedData.datasetType,
+                    confidence: uploadedData.detectionConfidence,
+                    modelUsed: uploadedData.model,
+                    pipelineMs: uploadedData.pipelineRunMs,
+                    analyticsDatasetId: analyticsDataset?.analyticsDatasetId,
+                    totalKPIs: activeKPIs?.length,
+                    totalCharts: dashboardCharts?.length
+                  }, null, 2)}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <DashboardChatWidget data={uploadedData} />
+        <SecureExportDialog
+          open={Boolean(secureDialogMode)}
+          mode={secureDialogMode}
+          data={uploadedData}
+          onClose={() => setSecureDialogMode(null)}
+        />
+      </main>
+    </div>
+  );
+}
+
+function DashboardChatWidget({ data }) {
+  const { analysisSession, setSessionChatHistory, setUploadedData } = useData();
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [collapsed, setCollapsed] = useState(false);
+  const chatEndRef = useRef(null);
+  const sessionId = data?.sessionId || analysisSession?.sessionId;
+  const history = useMemo(() => analysisSession?.chatHistory || [], [analysisSession?.chatHistory]);
+
+  const suggestions = useMemo(() => {
+    const cols = data?.columns || [];
+    const hasMissing = (data?.missingValueSummary || []).length > 0;
+    const hasModel = data?.dataScience?.modelTraining?.trained;
+    return [
+      'Explain the most important finding',
+      hasMissing ? 'Which columns have missing values?' : 'What is the data quality summary?',
+      'What are the strongest relationships?',
+      (data?.outlierSummary || []).length ? 'Show the most unusual records' : 'What risks exist in this dataset?',
+      hasModel ? 'Which features are most important?' : 'What preprocessing is recommended?',
+      cols.length ? `Explain column ${cols[0]}` : 'Summarize the report in simple language',
+    ].filter(Boolean).slice(0, 6);
+  }, [data]);
+
+  const handleSend = async (txt = query) => {
+    const activeText = txt.trim();
+    if (!activeText || loading) return;
+    setError('');
+    
+    const userMsg = { role: 'user', text: activeText };
+    setSessionChatHistory(sessionId, prev => [...prev, userMsg]);
+    setQuery('');
+    setLoading(true);
+
+    try {
+      const response = await askDataChat(activeText, data, history);
+      const reply = typeof response === 'string' ? response : response.answer;
+      let replySessionId = sessionId;
+      if (typeof response === 'object' && response.analysis) {
+        const nextData = { ...response.analysis, sessionId: response.sessionId || response.analysis.sessionId };
+        replySessionId = nextData.sessionId;
+        setUploadedData(nextData);
+      } else if (typeof response === 'object' && response.clearActiveAnalysis) {
+        setUploadedData(null);
+      }
+      if (replySessionId) {
+        setSessionChatHistory(replySessionId, prev => [...prev, { role: 'assistant', text: reply }]);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const regenerateLast = () => {
+    const lastUser = [...history].reverse().find(msg => msg.role === 'user');
+    if (lastUser) handleSend(lastUser.text);
+  };
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [history, loading, error]);
+
+  return (
+    <section className={`analysis-chat-dock ${collapsed ? 'is-collapsed' : ''}`} aria-label="Dataset chatbot">
+      <div className="analysis-chat-header">
+        <div className="analysis-chat-title">
+          <strong>AI Data Assistant</strong>
+          <span>Grounded to {data?.fileName || 'current session'}</span>
+        </div>
+        <div className="analysis-chat-actions">
+          {loading && (
+            <button type="button" className="chat-tool-btn" onClick={() => setLoading(false)} title="Stop generation">
+              <Square size={14} />
+            </button>
+          )}
+          <button type="button" className="chat-tool-btn" onClick={regenerateLast} disabled={!history.some(m => m.role === 'user') || loading} title="Regenerate last answer">
+            <RotateCcw size={14} />
+          </button>
+          <button type="button" className="chat-tool-btn" onClick={() => setCollapsed(v => !v)} title={collapsed ? 'Open chat' : 'Collapse chat'}>
+            {collapsed ? <PanelBottomOpen size={15} /> : <PanelBottomClose size={15} />}
+          </button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <>
+          <div className="analysis-chat-messages">
+            {history.length === 0 && (
+              <div className="analysis-chat-empty">
+                <Zap size={22} color="var(--blue-600)" />
+                <div>Ask questions about the current uploaded file, analysis, charts, preprocessing, or model results.</div>
+                <div className="analysis-chat-suggestions">
+                  {suggestions.map(hint => (
+                    <button key={hint} className="chat-hint" onClick={() => handleSend(hint)} disabled={loading}>
+                      {hint}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {history.map((msg, i) => (
+              <div key={`${msg.role}-${i}`} className={`analysis-chat-row ${msg.role}`}>
+                <div className="analysis-chat-bubble">
+                  <div>{msg.text}</div>
+                  {msg.role === 'assistant' && (
+                    <button
+                      type="button"
+                      className="copy-response-btn"
+                      onClick={() => navigator.clipboard?.writeText(msg.text)}
+                      title="Copy response"
+                    >
+                      <Copy size={12} /> Copy
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div className="analysis-chat-row assistant">
+                <div className="analysis-chat-bubble typing">
+                  <Loader2 size={13} className="upload-spinner" />
+                  Assistant is reading the current analysis...
+                </div>
+              </div>
+            )}
+            {error && (
+              <div className="analysis-chat-error">
+                <AlertTriangle size={14} />
+                <span>{error}</span>
+                <button type="button" onClick={regenerateLast}>Retry</button>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          <div className="analysis-chat-composer">
+            <textarea
+              className="analysis-chat-input"
+              placeholder="Ask about this dataset..."
+              value={query}
+              rows={1}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
+              disabled={loading}
+              aria-label="Ask a question about the current analysis"
+            />
+            <button className="analysis-chat-send" onClick={() => handleSend()} disabled={loading || !query.trim()} aria-label="Send message">
+              {loading ? <Loader2 size={15} className="upload-spinner" /> : <Send size={15} />}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
