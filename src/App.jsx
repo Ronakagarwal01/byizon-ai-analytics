@@ -1,6 +1,9 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { BrowserRouter, Navigate, Routes, Route, useLocation } from "react-router-dom";
 import { DataProvider } from "./context/DataContext";
 import { ThemeProvider } from "./context/ThemeContext";
+import { getAuthSession } from "./api/universalBackend";
+import { isGuestWorkspaceUser } from "./utils/workspaceUser";
 
 import Landing      from "./pages/Landing";
 import UploadPage   from "./pages/UploadPage";
@@ -34,43 +37,85 @@ function AppVoiceAssistant() {
   return <GlobalVoiceAssistant />;
 }
 
+function ProtectedRoute({ children }) {
+  const location = useLocation();
+  const [status, setStatus] = useState("checking");
+
+  useEffect(() => {
+    let mounted = true;
+    getAuthSession()
+      .then(payload => {
+        if (!mounted) return;
+        const signedIn = Boolean(payload?.user) && !isGuestWorkspaceUser(payload.user);
+        setStatus(signedIn ? "signed-in" : "signed-out");
+      })
+      .catch(() => {
+        if (mounted) setStatus("signed-out");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  if (status === "checking") {
+    return (
+      <main className="auth-check-screen" aria-live="polite">
+        <div>
+          <strong>BYiZON</strong>
+          <span>Opening your secure workspace...</span>
+        </div>
+      </main>
+    );
+  }
+
+  if (status === "signed-out") {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  return (
+    <>
+      <AppVoiceAssistant />
+      {children}
+    </>
+  );
+}
+
 function App() {
   return (
     <ThemeProvider>
       <DataProvider>
         <BrowserRouter>
-          <AppVoiceAssistant />
           <Routes>
-          <Route path="/"              element={<Home />}         />
+          <Route path="/"              element={<ProtectedRoute><Home /></ProtectedRoute>} />
           <Route path="/landing"       element={<Landing />}      />
           <Route path="/login"         element={<Login />}        />
           <Route path="/signup"        element={<Signup />}       />
           <Route path="/register"      element={<Signup />}       />
           <Route path="/verify-email"  element={<VerifyEmail />}  />
-          <Route path="/onboarding"    element={<OnboardingCompany />} />
-          <Route path="/onboarding/company" element={<OnboardingCompany />} />
-          <Route path="/onboarding/team" element={<OnboardingTeam />} />
-          <Route path="/onboarding/data-source" element={<OnboardingDataSource />} />
-          <Route path="/onboarding/ai-workspace" element={<OnboardingAiWorkspace />} />
-          <Route path="/onboarding/complete" element={<OnboardingComplete />} />
+          <Route path="/onboarding"    element={<ProtectedRoute><OnboardingCompany /></ProtectedRoute>} />
+          <Route path="/onboarding/company" element={<ProtectedRoute><OnboardingCompany /></ProtectedRoute>} />
+          <Route path="/onboarding/team" element={<ProtectedRoute><OnboardingTeam /></ProtectedRoute>} />
+          <Route path="/onboarding/data-source" element={<ProtectedRoute><OnboardingDataSource /></ProtectedRoute>} />
+          <Route path="/onboarding/ai-workspace" element={<ProtectedRoute><OnboardingAiWorkspace /></ProtectedRoute>} />
+          <Route path="/onboarding/complete" element={<ProtectedRoute><OnboardingComplete /></ProtectedRoute>} />
           <Route path="/privacy"       element={<Privacy />}      />
           <Route path="/terms"         element={<Terms />}        />
-          <Route path="/upload"        element={<UploadPage />}   />
-          <Route path="/dashboard"     element={<Dashboard />}    />
-          <Route path="/dashboard/:dashboardId" element={<DynamicDashboardPage />} />
-          <Route path="/chat"          element={<Chat />}         />
-          <Route path="/voice"         element={<VoiceAssistantPage />} />
-          <Route path="/analytics"     element={<AnalyticsBriefPage />} />
-          <Route path="/reports"       element={<Reports />}      />
-          <Route path="/connections"   element={<Connections />}  />
-          <Route path="/meetings"      element={<Meetings />}     />
-          <Route path="/calendar"      element={<CalendarPage />} />
-          <Route path="/studio"        element={<DashboardStudio />} />
-          <Route path="/studio/:reportId" element={<DashboardStudio />} />
+          <Route path="/upload"        element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
+          <Route path="/dashboard"     element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/dashboard/:dashboardId" element={<ProtectedRoute><DynamicDashboardPage /></ProtectedRoute>} />
+          <Route path="/chat"          element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+          <Route path="/voice"         element={<ProtectedRoute><VoiceAssistantPage /></ProtectedRoute>} />
+          <Route path="/analytics"     element={<ProtectedRoute><AnalyticsBriefPage /></ProtectedRoute>} />
+          <Route path="/reports"       element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+          <Route path="/connections"   element={<ProtectedRoute><Connections /></ProtectedRoute>} />
+          <Route path="/meetings"      element={<ProtectedRoute><Meetings /></ProtectedRoute>} />
+          <Route path="/calendar"      element={<ProtectedRoute><CalendarPage /></ProtectedRoute>} />
+          <Route path="/studio"        element={<ProtectedRoute><DashboardStudio /></ProtectedRoute>} />
+          <Route path="/studio/:reportId" element={<ProtectedRoute><DashboardStudio /></ProtectedRoute>} />
           <Route path="/custom-dashboard/:reportId" element={<SharedCustomDashboard />} />
           {/* BUG-03 FIX: Dynamic route — any reportId works, not just "abc123" */}
           <Route path="/report/:reportId" element={<SharedReport />} />
-          <Route path="/generate-website" element={<AIWebsiteGenerator />} />
+          <Route path="/generate-website" element={<ProtectedRoute><AIWebsiteGenerator /></ProtectedRoute>} />
           </Routes>
         </BrowserRouter>
       </DataProvider>

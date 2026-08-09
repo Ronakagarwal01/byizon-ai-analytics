@@ -16757,6 +16757,37 @@ html body #root {
   --chart-tooltip-shadow: 0 16px 38px rgba(65, 40, 28, 0.12);
 }
 
+.auth-check-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #f4eadf;
+  color: #111827;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.auth-check-screen > div {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  padding: 28px 34px;
+  border: 1px solid rgba(154, 85, 47, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 253, 249, 0.9);
+  box-shadow: 0 22px 60px rgba(65, 40, 28, 0.12);
+}
+
+.auth-check-screen strong {
+  font-size: 30px;
+  letter-spacing: 0;
+  color: #2b1b14;
+}
+
+.auth-check-screen span {
+  color: #7b685e;
+  font-weight: 700;
+}
+
 html body #root .dashboard-page {
   min-height: 100vh !important;
   padding: 36px 48px 72px !important;
