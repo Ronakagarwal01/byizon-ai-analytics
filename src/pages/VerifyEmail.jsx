@@ -26,7 +26,7 @@ export default function VerifyEmail() {
       localStorage.removeItem('byizon_pending_user');
       localStorage.setItem('byizon_signup_user', JSON.stringify(payload.user));
       setNotice({ type: 'success', text: 'Email verified. Opening setup Step 1...' });
-      window.setTimeout(() => navigate('/onboarding/company'), 550);
+      window.setTimeout(() => navigate(payload.nextStep || payload.user?.onboarding?.nextStep || '/onboarding/company'), 550);
     } catch (error) {
       setNotice({ type: 'error', text: error.message || 'OTP verify nahi ho paya.' });
     } finally {

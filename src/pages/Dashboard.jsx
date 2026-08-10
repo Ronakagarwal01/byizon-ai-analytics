@@ -7,7 +7,6 @@ import { recomputeFilteredKPIs } from '../api/analyticsEngine';
 import { askDataChat } from '../api/huggingface';
 import { refreshConnectedSource } from '../api/universalBackend';
 import { useChartTheme } from '../utils/chartTheme';
-import { useWorkspaceUser } from '../utils/workspaceUser';
 import * as XLSX from 'xlsx';
 import {
   LineChart, Line,
@@ -19,8 +18,7 @@ import {
   Share2, Download, RefreshCw, FileSpreadsheet,
   Sparkles, AlertTriangle, CheckCircle2, Target, Send, Zap, Loader2,
   Filter, ChevronLeft, ChevronRight, ChevronDown, DownloadCloud,
-  Activity, Copy, RotateCcw, Square, PanelBottomClose, PanelBottomOpen,
-  Settings
+  Activity, Copy, RotateCcw, Square, PanelBottomClose, PanelBottomOpen
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -370,8 +368,6 @@ function UniversalChart({ chart, index }) {
 export default function Dashboard() {
   const { uploadedData, setUploadedData } = useData();
   const chartTheme = useChartTheme();
-  const workspaceUser = useWorkspaceUser();
-  const firstName = workspaceUser.firstName || 'there';
   const [activeTab, setActiveTab] = useState('overview'); // overview | visuals | quality | drilldown | anomalies
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilters, setActiveFilters] = useState({});

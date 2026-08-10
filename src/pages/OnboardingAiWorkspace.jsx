@@ -125,10 +125,8 @@ export default function OnboardingAiWorkspace() {
       });
       setNotice({ type: 'success', text: 'AI workspace preferences saved.' });
       window.setTimeout(() => navigate('/onboarding/complete'), 450);
-    } catch {
-      localStorage.setItem('byizon_onboarding_ai_workspace', JSON.stringify(form));
-      setNotice({ type: 'success', text: 'AI workspace preferences saved locally.' });
-      window.setTimeout(() => navigate('/onboarding/complete'), 450);
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message || 'AI workspace preferences save nahi ho payi.' });
     } finally {
       setSaving(false);
     }

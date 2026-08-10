@@ -125,6 +125,19 @@ def _database() -> sqlite3.Connection:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workspace_onboarding_state (
+            user_id TEXT PRIMARY KEY,
+            current_step INTEGER NOT NULL DEFAULT 1,
+            data_source TEXT,
+            completed INTEGER NOT NULL DEFAULT 0,
+            completed_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     return connection
 
 
@@ -207,6 +220,55 @@ def _safe_account(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+_ONBOARDING_PATHS = {
+    1: "/onboarding/company",
+    2: "/onboarding/team",
+    3: "/onboarding/data-source",
+    4: "/onboarding/ai-workspace",
+    5: "/onboarding/complete",
+}
+
+
+def _status_row(db: sqlite3.Connection, user_id: str) -> sqlite3.Row | None:
+    return db.execute("SELECT * FROM workspace_onboarding_state WHERE user_id = ?", (user_id,)).fetchone()
+
+
+def _status_payload(row: sqlite3.Row | None) -> dict[str, Any]:
+    current_step = max(1, min(5, int(row["current_step"]))) if row else 1
+    completed = bool(row["completed"]) if row else False
+    return {
+        "currentStep": current_step,
+        "dataSource": row["data_source"] if row else None,
+        "completed": completed,
+        "completedAt": row["completed_at"] if row else None,
+        "nextStep": "/dashboard" if completed else _ONBOARDING_PATHS[current_step],
+    }
+
+
+def _advance_onboarding(db: sqlite3.Connection, user_id: str, current_step: int, data_source: str | None = None) -> None:
+    now = _utc_now()
+    db.execute(
+        """
+        INSERT INTO workspace_onboarding_state (
+            user_id, current_step, data_source, completed, completed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 0, NULL, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            current_step=MAX(workspace_onboarding_state.current_step, excluded.current_step),
+            data_source=COALESCE(excluded.data_source, workspace_onboarding_state.data_source),
+            updated_at=excluded.updated_at
+        """,
+        (user_id, current_step, data_source, now, now),
+    )
+
+
+def get_onboarding_status(user_id: str) -> dict[str, Any]:
+    user_id = _clean(user_id)
+    if not user_id.startswith("usr_"):
+        return _status_payload(None)
+    with closing(_database()) as db:
+        return _status_payload(_status_row(db, user_id))
+
+
 def _issue_email_otp(db: sqlite3.Connection, user_id: str, work_email: str, first_name: str) -> dict[str, Any]:
     otp = _otp_code()
     now = _utc_now()
@@ -263,6 +325,40 @@ def create_account(payload: dict[str, Any]) -> dict[str, Any]:
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12))
 
     with closing(_database()) as db:
+        existing = db.execute("SELECT * FROM workspace_accounts WHERE work_email = ?", (work_email,)).fetchone()
+        if existing:
+            if existing["email_verified"]:
+                raise AccountExistsError("An account already exists with this work email.")
+            db.execute(
+                """
+                UPDATE workspace_accounts
+                SET first_name = ?,
+                    last_name = ?,
+                    company_name = ?,
+                    phone_country_code = ?,
+                    phone_number = ?,
+                    password_hash = ?,
+                    terms_accepted = ?,
+                    updated_at = ?
+                WHERE user_id = ?
+                """,
+                (
+                    first_name,
+                    last_name,
+                    company_name,
+                    phone_country_code,
+                    phone_number,
+                    sqlite3.Binary(password_hash),
+                    1,
+                    now,
+                    existing["user_id"],
+                ),
+            )
+            delivery = _issue_email_otp(db, existing["user_id"], work_email, first_name)
+            db.commit()
+            row = db.execute("SELECT * FROM workspace_accounts WHERE user_id = ?", (existing["user_id"],)).fetchone()
+            return {**_safe_account(row), "otpDelivery": delivery, "pendingVerification": True}
+
         try:
             db.execute(
                 """
@@ -296,13 +392,57 @@ def create_account(payload: dict[str, Any]) -> dict[str, Any]:
     return {**_safe_account(row), "otpDelivery": delivery}
 
 
+def resolve_oauth_account(provider: str, provider_subject: str, email: str, display_name: str) -> str:
+    provider = _clean(provider).lower()
+    email = _clean(email).lower()
+    if provider != "google" or not provider_subject or not _EMAIL_RE.match(email):
+        raise ValueError("Google did not return a verified account identity.")
+
+    from .workspace_identity import google_workspace_id
+
+    oauth_user_id = google_workspace_id(provider_subject)
+    parts = _clean(display_name).split(None, 1)
+    first_name = parts[0] if parts else email.split("@", 1)[0]
+    last_name = parts[1] if len(parts) > 1 else ""
+    now = _utc_now()
+    random_password_hash = bcrypt.hashpw(secrets.token_urlsafe(32).encode("utf-8"), bcrypt.gensalt(rounds=12))
+
+    with closing(_database()) as db:
+        existing = db.execute("SELECT user_id FROM workspace_accounts WHERE work_email = ?", (email,)).fetchone()
+        if existing:
+            return str(existing["user_id"])
+        db.execute(
+            """
+            INSERT INTO workspace_accounts (
+                user_id, first_name, last_name, work_email, company_name,
+                phone_country_code, phone_number, password_hash, terms_accepted,
+                provider, created_at, updated_at, email_verified, email_verified_at
+            ) VALUES (?, ?, ?, ?, '', '', '', ?, 1, 'google', ?, ?, 1, ?)
+            """,
+            (
+                oauth_user_id,
+                first_name,
+                last_name,
+                email,
+                sqlite3.Binary(random_password_hash),
+                now,
+                now,
+                now,
+            ),
+        )
+        db.commit()
+    return oauth_user_id
+
+
 def account_profile(user_id: str) -> dict[str, Any] | None:
     user_id = _clean(user_id)
     if not user_id:
         return None
     with closing(_database()) as db:
         row = db.execute("SELECT * FROM workspace_accounts WHERE user_id = ?", (user_id,)).fetchone()
-    return _safe_account(row) if row else None
+    if not row:
+        return None
+    return {**_safe_account(row), "onboarding": get_onboarding_status(user_id)}
 
 
 def authenticate_account(work_email: str, password: str) -> dict[str, Any]:
@@ -319,7 +459,43 @@ def authenticate_account(work_email: str, password: str) -> dict[str, Any]:
         raise InvalidCredentialsError("Invalid email or password.")
     if not row["email_verified"]:
         raise InvalidCredentialsError("Please verify your email before logging in.")
-    return _safe_account(row)
+    return {**_safe_account(row), "onboarding": get_onboarding_status(row["user_id"])}
+
+
+def request_login_otp(work_email: str) -> dict[str, Any]:
+    email = _clean(work_email).lower()
+    if not _EMAIL_RE.match(email):
+        raise InvalidCredentialsError("Enter a valid email address.")
+    with closing(_database()) as db:
+        row = db.execute("SELECT * FROM workspace_accounts WHERE work_email = ?", (email,)).fetchone()
+        if not row or not row["email_verified"]:
+            raise InvalidCredentialsError("No verified account was found for this email.")
+        delivery = _issue_email_otp(db, row["user_id"], email, row["first_name"])
+        db.commit()
+    return {"email": email, "delivery": delivery}
+
+
+def authenticate_account_otp(work_email: str, otp: str) -> dict[str, Any]:
+    email = _clean(work_email).lower()
+    code = re.sub(r"\D", "", str(otp or ""))
+    if not _EMAIL_RE.match(email) or len(code) != 6:
+        raise InvalidCredentialsError("Enter the 6-digit OTP sent to your email.")
+    with closing(_database()) as db:
+        otp_row = db.execute("SELECT * FROM workspace_email_otps WHERE work_email = ?", (email,)).fetchone()
+        account = db.execute("SELECT * FROM workspace_accounts WHERE work_email = ?", (email,)).fetchone()
+        if not otp_row or not account or not account["email_verified"]:
+            raise InvalidCredentialsError("OTP was not found. Please request a new OTP.")
+        if otp_row["attempts"] >= 5:
+            raise InvalidCredentialsError("Too many failed OTP attempts. Please request a new OTP.")
+        if datetime.now(timezone.utc) > datetime.fromisoformat(otp_row["expires_at"]):
+            raise InvalidCredentialsError("OTP expired. Please request a new OTP.")
+        if not bcrypt.checkpw(code.encode("utf-8"), bytes(otp_row["otp_hash"])):
+            db.execute("UPDATE workspace_email_otps SET attempts = attempts + 1 WHERE work_email = ?", (email,))
+            db.commit()
+            raise InvalidCredentialsError("Invalid OTP.")
+        db.execute("DELETE FROM workspace_email_otps WHERE work_email = ?", (email,))
+        db.commit()
+    return {**_safe_account(account), "onboarding": get_onboarding_status(account["user_id"])}
 
 
 def resend_email_otp(work_email: str) -> dict[str, Any]:
@@ -360,7 +536,7 @@ def verify_email_otp(work_email: str, otp: str) -> dict[str, Any]:
         db.execute("DELETE FROM workspace_email_otps WHERE work_email = ?", (email,))
         db.commit()
         account = db.execute("SELECT * FROM workspace_accounts WHERE user_id = ?", (row["user_id"],)).fetchone()
-    return _safe_account(account)
+    return {**_safe_account(account), "onboarding": get_onboarding_status(account["user_id"])}
 
 
 def save_company_onboarding(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -444,6 +620,7 @@ def save_company_onboarding(user_id: str, payload: dict[str, Any]) -> dict[str, 
                 now,
             ),
         )
+        _advance_onboarding(db, user_id, 2)
         db.commit()
         row = db.execute("SELECT * FROM workspace_onboarding_company WHERE user_id = ?", (user_id,)).fetchone()
     return {
@@ -551,6 +728,7 @@ def save_ai_workspace_onboarding(user_id: str, payload: dict[str, Any]) -> dict[
                 now,
             ),
         )
+        _advance_onboarding(db, user_id, 5)
         db.commit()
         row = db.execute("SELECT * FROM workspace_onboarding_ai WHERE user_id = ?", (user_id,)).fetchone()
     return _ai_workspace_row(row)
@@ -649,5 +827,43 @@ def save_team_invites(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
                 """,
                 (f"inv_{secrets.token_hex(10)}", user_id, email, role, personal_message, now, now),
             )
+        _advance_onboarding(db, user_id, 3)
         db.commit()
     return {"invites": list_team_invites(user_id), "count": len(list_team_invites(user_id))}
+
+
+def save_data_source_onboarding(user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    user_id = _clean(user_id)
+    source = _clean(payload.get("dataSource"))
+    if not user_id.startswith("usr_"):
+        raise ValueError("Valid workspace session is required.")
+    if source not in {"upload", "apps", "database"}:
+        raise ValueError("Choose a valid data source to continue.")
+    with closing(_database()) as db:
+        _advance_onboarding(db, user_id, 4, source)
+        db.commit()
+        status = _status_payload(_status_row(db, user_id))
+    return status
+
+
+def complete_onboarding(user_id: str) -> dict[str, Any]:
+    user_id = _clean(user_id)
+    if not user_id.startswith("usr_"):
+        raise ValueError("Valid workspace session is required.")
+    with closing(_database()) as db:
+        company = db.execute("SELECT 1 FROM workspace_onboarding_company WHERE user_id = ? AND skipped = 0", (user_id,)).fetchone()
+        ai_workspace = db.execute("SELECT 1 FROM workspace_onboarding_ai WHERE user_id = ? AND skipped = 0", (user_id,)).fetchone()
+        status = _status_row(db, user_id)
+        if not company:
+            raise ValueError("Complete Company Information before activating your account.")
+        if not status or int(status["current_step"]) < 5 or not status["data_source"]:
+            raise ValueError("Complete Team Members and Data Source setup before activating your account.")
+        if not ai_workspace:
+            raise ValueError("Complete AI Assistant Setup before activating your account.")
+        now = _utc_now()
+        db.execute(
+            "UPDATE workspace_onboarding_state SET current_step = 5, completed = 1, completed_at = ?, updated_at = ? WHERE user_id = ?",
+            (now, now, user_id),
+        )
+        db.commit()
+        return _status_payload(_status_row(db, user_id))

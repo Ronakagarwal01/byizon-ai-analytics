@@ -418,10 +418,13 @@ def oauth_start(
         "capability": capability,
     }
     requested_scope = config["scope"]
-    if connector_id == "google-workspace" and capability in GOOGLE_PERMISSION_GROUPS:
-        requested_scope = " ".join(
-            sorted(GOOGLE_BASE_SCOPES | GOOGLE_PERMISSION_GROUPS[capability]["scopes"])
-        )
+    if connector_id == "google-workspace":
+        if capability == "login":
+            requested_scope = " ".join(sorted(GOOGLE_BASE_SCOPES))
+        elif capability in GOOGLE_PERMISSION_GROUPS:
+            requested_scope = " ".join(
+                sorted(GOOGLE_BASE_SCOPES | GOOGLE_PERMISSION_GROUPS[capability]["scopes"])
+            )
     params = {
         "client_id": config["client_id"],
         "redirect_uri": redirect_uri,
@@ -523,9 +526,14 @@ def oauth_callback(
         authenticated_owner_user_id = None
         connection_owner_user_id = state_owner_user_id
         if connector_id == "google-workspace":
-            from .workspace_identity import google_workspace_id
+            from .account_store import resolve_oauth_account
 
-            authenticated_owner_user_id = google_workspace_id(str(account.get("id") or ""))
+            authenticated_owner_user_id = resolve_oauth_account(
+                "google",
+                str(account.get("id") or ""),
+                str(account.get("email") or ""),
+                str(account.get("displayName") or ""),
+            )
             _remember_owner_alias(state_owner_user_id, authenticated_owner_user_id)
             reassign_owner(state_owner_user_id, authenticated_owner_user_id)
             connection_owner_user_id = authenticated_owner_user_id

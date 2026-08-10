@@ -2,8 +2,6 @@ import { useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Routes, Route, useLocation } from "react-router-dom";
 import { DataProvider } from "./context/DataContext";
 import { ThemeProvider } from "./context/ThemeContext";
-import { getAuthSession } from "./api/universalBackend";
-import { isGuestWorkspaceUser } from "./utils/workspaceUser";
 
 import Landing      from "./pages/Landing";
 import UploadPage   from "./pages/UploadPage";
@@ -29,9 +27,9 @@ import OnboardingTeam from "./pages/OnboardingTeam";
 import OnboardingDataSource from "./pages/OnboardingDataSource";
 import OnboardingAiWorkspace from "./pages/OnboardingAiWorkspace";
 import OnboardingComplete from "./pages/OnboardingComplete";
-import VerifyEmail from "./pages/VerifyEmail";
 import AIWebsiteGenerator from "./pages/AIWebsiteGenerator";
 import GlobalVoiceAssistant from "./voice/GlobalVoiceAssistant";
+import { getAuthSession } from "./api/universalBackend";
 
 function AppVoiceAssistant() {
   return <GlobalVoiceAssistant />;
@@ -39,42 +37,40 @@ function AppVoiceAssistant() {
 
 function ProtectedRoute({ children }) {
   const location = useLocation();
-  const [status, setStatus] = useState("checking");
+  const [session, setSession] = useState({ loading: true, user: null });
 
   useEffect(() => {
     let mounted = true;
     getAuthSession()
       .then(payload => {
-        if (!mounted) return;
-        const signedIn = Boolean(payload?.user) && !isGuestWorkspaceUser(payload.user);
-        setStatus(signedIn ? "signed-in" : "signed-out");
+        if (mounted) setSession({ loading: false, user: payload.user || null });
       })
       .catch(() => {
-        if (mounted) setStatus("signed-out");
+        if (mounted) setSession({ loading: false, user: null });
       });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+    return () => { mounted = false; };
+  }, [location.pathname]);
 
-  if (status === "checking") {
-    return (
-      <main className="auth-check-screen" aria-live="polite">
-        <div>
-          <strong>BYiZON</strong>
-          <span>Opening your secure workspace...</span>
-        </div>
-      </main>
-    );
+  if (session.loading) {
+    return <main className="auth-check-screen" aria-live="polite">Loading your Byizon workspace...</main>;
   }
 
-  if (status === "signed-out") {
+  if (!session.user?.authenticated) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  const onboarding = session.user.onboarding || {};
+  const isOnboardingRoute = location.pathname.startsWith('/onboarding');
+  if (!onboarding.completed && !isOnboardingRoute) {
+    return <Navigate to={onboarding.nextStep || '/onboarding/company'} replace />;
+  }
+  if (onboarding.completed && isOnboardingRoute) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return (
     <>
-      <AppVoiceAssistant />
+      {!isOnboardingRoute && <AppVoiceAssistant />}
       {children}
     </>
   );
@@ -86,12 +82,13 @@ function App() {
       <DataProvider>
         <BrowserRouter>
           <Routes>
-          <Route path="/"              element={<ProtectedRoute><Home /></ProtectedRoute>} />
+          <Route path="/"              element={<Landing />} />
           <Route path="/landing"       element={<Landing />}      />
+          <Route path="/home"          element={<ProtectedRoute><Home /></ProtectedRoute>} />
           <Route path="/login"         element={<Login />}        />
           <Route path="/signup"        element={<Signup />}       />
           <Route path="/register"      element={<Signup />}       />
-          <Route path="/verify-email"  element={<VerifyEmail />}  />
+          <Route path="/verify-email"  element={<Navigate to="/dashboard" replace />} />
           <Route path="/onboarding"    element={<ProtectedRoute><OnboardingCompany /></ProtectedRoute>} />
           <Route path="/onboarding/company" element={<ProtectedRoute><OnboardingCompany /></ProtectedRoute>} />
           <Route path="/onboarding/team" element={<ProtectedRoute><OnboardingTeam /></ProtectedRoute>} />

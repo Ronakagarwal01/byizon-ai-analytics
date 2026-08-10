@@ -24,6 +24,22 @@ services:
         sync: false
       - key: FRONTEND_ORIGIN
         sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: BYIZON_AUTH_DISABLED
+        value: "true"
+      - key: BYIZON_SMTP_HOST
+        sync: false
+      - key: BYIZON_SMTP_PORT
+        value: "587"
+      - key: BYIZON_SMTP_TLS
+        value: "1"
+      - key: BYIZON_SMTP_FROM
+        sync: false
+      - key: BYIZON_SMTP_USER
+        sync: false
+      - key: BYIZON_SMTP_PASSWORD
+        sync: false
       - key: HF_API_KEY
         sync: false
       - key: HF_MODEL

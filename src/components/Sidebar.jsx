@@ -10,7 +10,7 @@ import WorkspaceTopbar from './WorkspaceTopbar';
 import { GUEST_WORKSPACE_USER, getStoredWorkspaceUser, isGuestWorkspaceUser, normalizeWorkspaceUser } from '../utils/workspaceUser';
 
 const navItems = [
-  { label: 'Dashboard', icon: HomeIcon, path: '/' },
+  { label: 'Dashboard', icon: HomeIcon, path: '/dashboard' },
   { label: 'AI Assistant', icon: Sparkles, path: '/chat' },
   { label: 'Reports', icon: FileText, path: '/reports' },
   { label: 'Data Sources', icon: Database, path: '/upload' },
@@ -60,7 +60,7 @@ export default function Sidebar() {
 
       <aside className={`sidebar byizon-sidebar ${isOpen ? 'open' : ''}`}>
         <button className="sidebar-close-btn" onClick={() => setIsOpen(false)} aria-label="Close navigation"><X size={18} /></button>
-        <Link to="/" className="byizon-logo" onClick={() => setIsOpen(false)}>
+        <Link to="/dashboard" className="byizon-logo" onClick={() => setIsOpen(false)}>
           <span>BYiZON</span><Sparkles size={12} />
           <small>AI POWERED BUSINESS OS</small>
         </Link>

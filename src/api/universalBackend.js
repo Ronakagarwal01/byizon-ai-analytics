@@ -88,6 +88,32 @@ export async function loginAccount(credentials) {
   return payload;
 }
 
+export async function requestLoginOtp(details) {
+  const response = await apiFetch(`${apiBase()}/api/auth/login-otp/request`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(details),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Could not send login OTP (${response.status}).`);
+  }
+  return payload;
+}
+
+export async function loginWithOtp(details) {
+  const response = await apiFetch(`${apiBase()}/api/auth/login-otp/verify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(details),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Could not verify login OTP (${response.status}).`);
+  }
+  return payload;
+}
+
 export async function verifyEmailOtp(details) {
   const response = await apiFetch(`${apiBase()}/api/auth/verify-email`, {
     method: 'POST',
@@ -178,6 +204,37 @@ export async function getAiWorkspaceOnboarding() {
     throw new Error(payload?.error || `Could not load AI workspace setup (${response.status}).`);
   }
   return payload.aiWorkspace;
+}
+
+export async function getOnboardingStatus() {
+  const response = await apiFetch(`${apiBase()}/api/onboarding/status`, { method: 'GET' });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Could not load onboarding status (${response.status}).`);
+  }
+  return payload.onboarding;
+}
+
+export async function saveDataSourceOnboarding(dataSource) {
+  const response = await apiFetch(`${apiBase()}/api/onboarding/data-source`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ dataSource }),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Could not save the data source (${response.status}).`);
+  }
+  return payload;
+}
+
+export async function completeOnboarding() {
+  const response = await apiFetch(`${apiBase()}/api/onboarding/complete`, { method: 'POST' });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Could not activate the account (${response.status}).`);
+  }
+  return payload;
 }
 
 export async function analyzeFileWithBackend(file) {

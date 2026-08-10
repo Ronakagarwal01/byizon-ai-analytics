@@ -13,7 +13,7 @@ import {
   Network,
   ShieldCheck,
 } from 'lucide-react';
-import { loginAccount } from '../api/universalBackend';
+import { loginAccount, oauthStartUrl } from '../api/universalBackend';
 import './PublicPages.css';
 
 function BrandPanel() {
@@ -61,7 +61,6 @@ function BrandPanel() {
     </section>
   );
 }
-
 export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
@@ -72,6 +71,14 @@ export default function Login() {
   const emailValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
   const canSubmit = emailValid && password.length > 0;
 
+  const finishLogin = (payload) => {
+    localStorage.removeItem('byizon_pending_email');
+    localStorage.removeItem('byizon_pending_user');
+    localStorage.setItem('byizon_login_user', JSON.stringify(payload.user));
+    setNotice({ type: 'success', text: payload.user?.onboarding?.completed ? 'Opening your workspace...' : 'Login successful. Resuming account setup...' });
+    window.setTimeout(() => navigate(payload.nextStep || payload.user?.onboarding?.nextStep || '/dashboard'), 350);
+  };
+
   const submit = async event => {
     event.preventDefault();
     if (!canSubmit || submitting) return;
@@ -79,11 +86,9 @@ export default function Login() {
     setNotice(null);
     try {
       const payload = await loginAccount({ email: email.trim(), password });
-      localStorage.setItem('byizon_login_user', JSON.stringify(payload.user));
-      setNotice({ type: 'success', text: 'Welcome back. Opening your Byizon workspace...' });
-      window.setTimeout(() => navigate('/dashboard'), 500);
+      finishLogin(payload);
     } catch (error) {
-      setNotice({ type: 'error', text: error.message || 'Login nahi ho paya. Email/password check karo.' });
+      setNotice({ type: 'error', text: error.message || 'Login nahi ho paya.' });
     } finally {
       setSubmitting(false);
     }
@@ -132,10 +137,7 @@ export default function Login() {
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
-                onChange={event => {
-                  setPassword(event.target.value);
-                  setNotice(null);
-                }}
+                onChange={event => { setPassword(event.target.value); setNotice(null); }}
                 placeholder="Enter your password"
                 autoComplete="current-password"
                 required
@@ -146,21 +148,14 @@ export default function Login() {
             </div>
           </label>
 
-          <div className="login-forgot-row">
-            <Link to="/forgot-password">Forgot password?</Link>
-          </div>
-
           <button className="signup-primary" type="submit" disabled={!canSubmit || submitting}>
             {submitting ? 'Logging in...' : 'Login to Byizon'} <ArrowRight size={17} />
           </button>
 
           <div className="signup-divider"><span>OR</span></div>
 
-          <button className="signup-social" type="button" onClick={() => setNotice({ type: 'error', text: 'Google login connector Step 3 me wire karenge. Email/password login fully working hai.' })}>
+          <button className="signup-social" type="button" onClick={() => window.location.assign(oauthStartUrl('google-workspace', '/', 'login'))}>
             <span className="signup-google">G</span> Continue with Google
-          </button>
-          <button className="signup-social" type="button" onClick={() => setNotice({ type: 'error', text: 'Microsoft login connector Step 3 me wire karenge. Email/password login fully working hai.' })}>
-            <span className="signup-microsoft">◆</span> Continue with Microsoft
           </button>
 
           <p className="signup-login-copy">Don&apos;t have an account? <Link to="/signup">Sign up</Link></p>

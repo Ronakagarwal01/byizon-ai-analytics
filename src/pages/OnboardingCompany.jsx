@@ -148,19 +148,6 @@ export default function OnboardingCompany() {
     }
   };
 
-  const skip = async () => {
-    if (saving) return;
-    setSaving(true);
-    try {
-      await saveCompanyOnboarding({ ...form, skipped: true });
-      navigate('/onboarding/team');
-    } catch (error) {
-      setNotice({ type: 'error', text: error.message || 'Skip save nahi ho paya.' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <main className="onboarding-page">
       <aside className="onboarding-rail">
@@ -288,7 +275,6 @@ export default function OnboardingCompany() {
           </label>
 
           <div className="onboarding-actions">
-            <button type="button" className="onboarding-skip" onClick={skip} disabled={saving}>Skip for now</button>
             <button className="signup-primary onboarding-continue" type="submit" disabled={!canContinue || saving}>
               {saving ? 'Saving...' : 'Continue'} <ArrowRight size={17} />
             </button>

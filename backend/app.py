@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .analytics.service import ANALYSIS_VERSION, analyze_file, chat_answer
 from .analytics.analytics_dataset import (
@@ -84,21 +84,29 @@ from .account_store import (
     AccountExistsError,
     InvalidCredentialsError,
     account_profile,
+    authenticate_account_otp,
     authenticate_account,
+    complete_onboarding,
     create_account,
     get_ai_workspace_onboarding,
     get_company_onboarding,
+    get_onboarding_status,
     list_team_invites,
     resend_email_otp,
+    request_login_otp,
     save_ai_workspace_onboarding,
     save_company_onboarding,
+    save_data_source_onboarding,
     save_team_invites,
     verify_email_otp,
 )
 
 
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
-CORS_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://127.0.0.1:5173")
+AUTH_DISABLED = os.getenv(
+    "BYIZON_AUTH_DISABLED",
+    "true" if os.getenv("BYIZON_ENV", "development").strip().lower() != "production" else "false",
+).strip().lower() in {"1", "true", "yes", "on"}
 LOCAL_FRONTEND_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
 REQUEST_ORIGIN: ContextVar[str] = ContextVar("request_origin", default="")
 DIST_DIR = Path(__file__).resolve().parents[1] / "dist"
@@ -181,11 +189,50 @@ def _resolve_contextual_followup(question: str, history: list[dict[str, str]]) -
     return trimmed
 
 
-def _cors_origin() -> bytes:
-    request_origin = REQUEST_ORIGIN.get()
-    allowed = {CORS_ORIGIN, *LOCAL_FRONTEND_ORIGINS}
-    selected = request_origin if request_origin in allowed else CORS_ORIGIN
-    return selected.encode("utf-8")
+def _configured_frontend_origins() -> set[str]:
+    configured = {
+        item.strip().rstrip("/")
+        for item in (
+            os.getenv("FRONTEND_ORIGIN", ""),
+            *os.getenv("FRONTEND_ORIGINS", "").split(","),
+        )
+        if item.strip()
+    }
+    frontend_url = os.getenv("FRONTEND_URL", "").strip()
+    if frontend_url:
+        parsed = urlsplit(frontend_url)
+        if parsed.scheme and parsed.netloc:
+            configured.add(f"{parsed.scheme}://{parsed.netloc}")
+    return configured | LOCAL_FRONTEND_ORIGINS
+
+
+def _cors_headers() -> list[tuple[bytes, bytes]]:
+    request_origin = REQUEST_ORIGIN.get().strip().rstrip("/")
+    if not request_origin or request_origin not in _configured_frontend_origins():
+        return []
+    return [
+        (b"access-control-allow-origin", request_origin.encode("utf-8")),
+        (b"access-control-allow-credentials", b"true"),
+        (b"access-control-allow-methods", b"GET,POST,PUT,PATCH,DELETE,OPTIONS"),
+        (b"access-control-allow-headers", b"content-type,authorization"),
+        (b"vary", b"Origin"),
+    ]
+
+
+def _bypass_profile(workspace_user_id: str, email: str = "") -> dict[str, Any]:
+    normalized_email = str(email or "").strip().lower()
+    display_name = normalized_email.split("@", 1)[0].replace(".", " ").title() if "@" in normalized_email else "Guest"
+    return {
+        "authenticated": True,
+        "provider": "auth-disabled",
+        "workspaceUserId": workspace_user_id,
+        "displayName": display_name or "Guest",
+        "firstName": display_name or "Guest",
+        "lastName": "",
+        "email": normalized_email,
+        "emailVerified": True,
+        "onboarding": {"completed": True, "currentStep": 6, "nextStep": "/dashboard"},
+    }
 
 
 async def _send_json(send, status: int, payload: Any, extra_headers: list[tuple[bytes, bytes]] | None = None):
@@ -193,13 +240,9 @@ async def _send_json(send, status: int, payload: Any, extra_headers: list[tuple[
     await send({
         "type": "http.response.start",
         "status": status,
-        "headers": [
-            (b"content-type", b"application/json; charset=utf-8"),
-            (b"access-control-allow-origin", _cors_origin()),
-            (b"access-control-allow-credentials", b"true"),
-            (b"access-control-allow-methods", b"GET,POST,OPTIONS"),
-            (b"access-control-allow-headers", b"content-type"),
-        ] + (extra_headers or []),
+        "headers": [(b"content-type", b"application/json; charset=utf-8")]
+        + _cors_headers()
+        + (extra_headers or []),
     })
     await send({"type": "http.response.body", "body": body})
 
@@ -214,9 +257,7 @@ async def _send_bytes(send, status: int, body: bytes, content_type: str, file_na
             (b"content-disposition", f'attachment; filename="{safe_name}"'.encode("ascii", errors="ignore")),
             (b"content-length", str(len(body)).encode("ascii")),
             (b"cache-control", b"no-store"),
-            (b"access-control-allow-origin", _cors_origin()),
-            (b"access-control-allow-credentials", b"true"),
-        ],
+        ] + _cors_headers(),
     })
     await send({"type": "http.response.body", "body": body})
 
@@ -225,12 +266,7 @@ async def _send_options(send):
     await send({
         "type": "http.response.start",
         "status": 204,
-        "headers": [
-            (b"access-control-allow-origin", _cors_origin()),
-            (b"access-control-allow-credentials", b"true"),
-            (b"access-control-allow-methods", b"GET,POST,OPTIONS"),
-            (b"access-control-allow-headers", b"content-type"),
-        ],
+        "headers": _cors_headers(),
     })
     await send({"type": "http.response.body", "body": b""})
 
@@ -443,7 +479,13 @@ async def app(scope, receive, send):
             return
 
         if method == "GET" and path == "/api/auth/session":
-            user_profile = account_profile(workspace_user_id) or workspace_profile(workspace_user_id)
+            user_profile = (
+                _bypass_profile(workspace_user_id)
+                if AUTH_DISABLED
+                else account_profile(workspace_user_id) or workspace_profile(workspace_user_id)
+            )
+            if user_profile.get("authenticated") and "onboarding" not in user_profile:
+                user_profile = {**user_profile, "onboarding": get_onboarding_status(workspace_user_id)}
             await _send_json(send, 200, {
                 "ok": True,
                 "workspaceUserId": workspace_user_id,
@@ -454,6 +496,31 @@ async def app(scope, receive, send):
         if method == "POST" and path == "/api/auth/signup":
             body = await _read_body(receive)
             payload = json.loads(body.decode("utf-8") or "{}")
+            if AUTH_DISABLED:
+                secure_cookie = scope.get("scheme") == "https" or headers.get("x-forwarded-proto") == "https"
+                user = _bypass_profile(workspace_user_id, payload.get("workEmail") or payload.get("email"))
+                supplied_name = " ".join(
+                    part for part in (
+                        str(payload.get("firstName") or "").strip(),
+                        str(payload.get("lastName") or "").strip(),
+                    ) if part
+                )
+                if supplied_name:
+                    user = {**user, "displayName": supplied_name, "firstName": str(payload.get("firstName") or "").strip(), "lastName": str(payload.get("lastName") or "").strip()}
+                await _send_json(
+                    send,
+                    201,
+                    {
+                        "ok": True,
+                        "requiresOtp": False,
+                        "email": user["email"],
+                        "user": user,
+                        "workspaceUserId": workspace_user_id,
+                        "nextStep": "/dashboard",
+                    },
+                    [(b"set-cookie", session_cookie(workspace_cookie_value(workspace_user_id), secure_cookie).encode("utf-8"))],
+                )
+                return
             try:
                 user = create_account(payload)
             except AccountExistsError as error:
@@ -469,7 +536,8 @@ async def app(scope, receive, send):
                     "ok": True,
                     "requiresOtp": True,
                     "email": user["email"],
-                    "message": "Account created. Verify your email with OTP to continue.",
+                    "message": "Verify your email with OTP to continue.",
+                    "pendingVerification": bool(user.get("pendingVerification")),
                     "otpDelivery": user.get("otpDelivery"),
                 },
             )
@@ -487,7 +555,12 @@ async def app(scope, receive, send):
             await _send_json(
                 send,
                 200,
-                {"ok": True, "user": user, "workspaceUserId": user["workspaceUserId"], "nextStep": "/onboarding/company"},
+                {
+                    "ok": True,
+                    "user": user,
+                    "workspaceUserId": user["workspaceUserId"],
+                    "nextStep": user.get("onboarding", {}).get("nextStep", "/onboarding/company"),
+                },
                 [(b"set-cookie", session_cookie(workspace_cookie_value(user["workspaceUserId"]), secure_cookie).encode("utf-8"))],
             )
             return
@@ -507,15 +580,56 @@ async def app(scope, receive, send):
             body = await _read_body(receive)
             payload = json.loads(body.decode("utf-8") or "{}")
             secure_cookie = scope.get("scheme") == "https" or headers.get("x-forwarded-proto") == "https"
+            if AUTH_DISABLED:
+                user = _bypass_profile(workspace_user_id, payload.get("email") or payload.get("workEmail"))
+            else:
+                try:
+                    user = authenticate_account(payload.get("email") or payload.get("workEmail"), payload.get("password"))
+                except InvalidCredentialsError as error:
+                    await _send_json(send, 401, {"ok": False, "error": str(error)})
+                    return
+            await _send_json(
+                send,
+                200,
+                {
+                    "ok": True,
+                    "user": user,
+                    "workspaceUserId": user["workspaceUserId"],
+                    "nextStep": user.get("onboarding", {}).get("nextStep", "/onboarding/company"),
+                },
+                [(b"set-cookie", session_cookie(workspace_cookie_value(user["workspaceUserId"]), secure_cookie).encode("utf-8"))],
+            )
+            return
+
+        if method == "POST" and path == "/api/auth/login-otp/request":
+            body = await _read_body(receive)
+            payload = json.loads(body.decode("utf-8") or "{}")
             try:
-                user = authenticate_account(payload.get("email") or payload.get("workEmail"), payload.get("password"))
+                result = request_login_otp(payload.get("email") or payload.get("workEmail"))
+            except InvalidCredentialsError as error:
+                await _send_json(send, 400, {"ok": False, "error": str(error)})
+                return
+            await _send_json(send, 200, {"ok": True, **result})
+            return
+
+        if method == "POST" and path == "/api/auth/login-otp/verify":
+            body = await _read_body(receive)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            secure_cookie = scope.get("scheme") == "https" or headers.get("x-forwarded-proto") == "https"
+            try:
+                user = authenticate_account_otp(payload.get("email") or payload.get("workEmail"), payload.get("otp"))
             except InvalidCredentialsError as error:
                 await _send_json(send, 401, {"ok": False, "error": str(error)})
                 return
             await _send_json(
                 send,
                 200,
-                {"ok": True, "user": user, "workspaceUserId": user["workspaceUserId"]},
+                {
+                    "ok": True,
+                    "user": user,
+                    "workspaceUserId": user["workspaceUserId"],
+                    "nextStep": user.get("onboarding", {}).get("nextStep", "/onboarding/company"),
+                },
                 [(b"set-cookie", session_cookie(workspace_cookie_value(user["workspaceUserId"]), secure_cookie).encode("utf-8"))],
             )
             return
@@ -528,6 +642,16 @@ async def app(scope, receive, send):
                 {"ok": True},
                 [(b"set-cookie", clear_session_cookie(secure_cookie).encode("utf-8"))],
             )
+            return
+
+        if path.startswith("/api/onboarding/"):
+            onboarding_user = account_profile(workspace_user_id) or workspace_profile(workspace_user_id)
+            if not onboarding_user.get("authenticated"):
+                await _send_json(send, 401, {"ok": False, "error": "Please sign in to continue onboarding."})
+                return
+
+        if method == "GET" and path == "/api/onboarding/status":
+            await _send_json(send, 200, {"ok": True, "onboarding": get_onboarding_status(workspace_user_id)})
             return
 
         if method == "GET" and path == "/api/onboarding/company":
@@ -560,6 +684,17 @@ async def app(scope, receive, send):
             await _send_json(send, 200, {"ok": True, **result, "nextStep": "/onboarding/data-source"})
             return
 
+        if method == "POST" and path == "/api/onboarding/data-source":
+            body = await _read_body(receive)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            try:
+                onboarding = save_data_source_onboarding(workspace_user_id, payload)
+            except ValueError as error:
+                await _send_json(send, 400, {"ok": False, "error": str(error)})
+                return
+            await _send_json(send, 200, {"ok": True, "onboarding": onboarding, "nextStep": "/onboarding/ai-workspace"})
+            return
+
         if method == "GET" and path == "/api/onboarding/ai-workspace":
             await _send_json(send, 200, {"ok": True, "aiWorkspace": get_ai_workspace_onboarding(workspace_user_id)})
             return
@@ -573,6 +708,15 @@ async def app(scope, receive, send):
                 await _send_json(send, 400, {"ok": False, "error": str(error)})
                 return
             await _send_json(send, 200, {"ok": True, "aiWorkspace": ai_workspace, "nextStep": "/dashboard"})
+            return
+
+        if method == "POST" and path == "/api/onboarding/complete":
+            try:
+                onboarding = complete_onboarding(workspace_user_id)
+            except ValueError as error:
+                await _send_json(send, 400, {"ok": False, "error": str(error)})
+                return
+            await _send_json(send, 200, {"ok": True, "onboarding": onboarding, "nextStep": "/dashboard"})
             return
 
         if method == "GET" and path == "/api/voice/config":

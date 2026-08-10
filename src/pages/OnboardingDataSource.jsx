@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import './PublicPages.css';
 import { useWorkspaceUser, workspaceInitials } from '../utils/workspaceUser';
+import { saveDataSourceOnboarding } from '../api/universalBackend';
 
 const STEPS = [
   ['Company Information', 'Completed'],
@@ -62,29 +63,30 @@ export default function OnboardingDataSource() {
   const navigate = useNavigate();
   const workspaceUser = useWorkspaceUser();
   const [selectedSource, setSelectedSource] = useState('upload');
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState(null);
   const profileName = workspaceUser.displayName || 'Workspace Admin';
   const profileInitials = workspaceInitials(workspaceUser);
 
-  const sourceRoutes = {
-    upload: '/upload',
-    apps: '/connections',
-    database: '/connections?filter=Database',
-  };
-
   const openSource = (sourceId) => {
     localStorage.setItem('byizon_onboarding_data_source', sourceId);
-    localStorage.setItem('byizon_onboarding_return', '/onboarding/ai-workspace');
-    navigate(sourceRoutes[sourceId] || '/onboarding/ai-workspace');
+    setSelectedSource(sourceId);
+    setNotice({ type: 'success', text: 'Data source selected. Continue to save this choice.' });
   };
 
-  const continueNext = () => {
-    localStorage.setItem('byizon_onboarding_data_source', selectedSource);
-    navigate('/onboarding/ai-workspace');
-  };
-
-  const skip = () => {
-    localStorage.setItem('byizon_onboarding_data_source', 'skipped');
-    navigate('/onboarding/ai-workspace');
+  const continueNext = async () => {
+    if (!selectedSource || saving) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      await saveDataSourceOnboarding(selectedSource);
+      localStorage.setItem('byizon_onboarding_data_source', selectedSource);
+      navigate('/onboarding/ai-workspace');
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message || 'Data source save nahi ho paya.' });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -141,9 +143,6 @@ export default function OnboardingDataSource() {
                 <span>{profileInitials}</span>
                 <strong>{profileName}<small>{workspaceUser.role || 'Super Admin'}</small></strong>
               </div>
-              <button type="button" className="data-source-skip-top" onClick={skip}>
-                Skip this step <ArrowRight size={15} />
-              </button>
             </div>
           </div>
 
@@ -151,6 +150,12 @@ export default function OnboardingDataSource() {
             <h2>Choose how you want to bring your data</h2>
             <p>Start with any option. You can connect more apps or upload files later anytime.</p>
           </div>
+
+          {notice && (
+            <div className={`signup-notice ${notice.type}`}>
+              <CheckCircle2 size={18} /><span>{notice.text}</span>
+            </div>
+          )}
 
           <div className="data-source-grid" role="radiogroup" aria-label="Choose your data source">
             {SOURCES.map(source => {
@@ -197,14 +202,13 @@ export default function OnboardingDataSource() {
               <strong>Not sure which one to choose?</strong>
               <p>No worries! You can start with Upload Files for quick insights and connect apps or databases anytime later from Integrations.</p>
             </div>
-            <button type="button" onClick={() => navigate('/connections')}>Learn more <ArrowRight size={14} /></button>
+            <button type="button" onClick={() => openSource('apps')}>Choose apps <ArrowRight size={14} /></button>
           </section>
 
           <div className="onboarding-actions data-source-bottom-actions">
             <button type="button" className="onboarding-back" onClick={() => navigate('/onboarding/team')}><ArrowLeft size={16} /> Back</button>
-            <button type="button" className="onboarding-skip" onClick={skip}>Skip this step</button>
-            <button className="signup-primary onboarding-continue" type="submit">
-              Continue <ArrowRight size={17} />
+            <button className="signup-primary onboarding-continue" type="submit" disabled={saving || !selectedSource}>
+              {saving ? 'Saving...' : 'Continue'} <ArrowRight size={17} />
             </button>
           </div>
         </form>

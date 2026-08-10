@@ -106,18 +106,24 @@ export default function Signup() {
         password: form.password,
         termsAccepted: form.termsAccepted,
       });
+      if (!payload.requiresOtp) {
+        localStorage.removeItem('byizon_pending_email');
+        localStorage.removeItem('byizon_pending_user');
+        localStorage.setItem('byizon_login_user', JSON.stringify(payload.user));
+        setNotice({ type: 'success', text: 'Account ready. Opening your workspace...' });
+        window.setTimeout(() => navigate(payload.nextStep || '/dashboard'), 350);
+        return;
+      }
       localStorage.setItem('byizon_pending_email', payload.email || form.workEmail.trim());
       localStorage.setItem('byizon_pending_user', JSON.stringify({
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
-        displayName: `${form.firstName.trim()} ${form.lastName.trim()}`.trim(),
         email: payload.email || form.workEmail.trim(),
-        companyName: form.companyName.trim(),
       }));
-      setNotice({ type: 'success', text: 'Account created. OTP verify karne ke liye email page open ho raha hai...' });
-      window.setTimeout(() => navigate(`/verify-email?email=${encodeURIComponent(payload.email || form.workEmail.trim())}`), 650);
+      setNotice({ type: 'success', text: 'Account details saved. Verify your email to begin the 5-step setup.' });
+      window.setTimeout(() => navigate(`/verify-email?email=${encodeURIComponent(payload.email || form.workEmail.trim())}`), 450);
     } catch (error) {
-      setNotice({ type: 'error', text: error.message || 'Account create nahi ho paya. Please retry.' });
+      setNotice({ type: 'error', text: error.message || 'Account create nahi ho paya.' });
     } finally {
       setSubmitting(false);
     }
@@ -256,11 +262,8 @@ export default function Signup() {
 
           <div className="signup-divider"><span>OR</span></div>
 
-          <button className="signup-social" type="button" onClick={() => window.location.assign(oauthStartUrl('google-workspace', '/onboarding/company', 'all'))}>
+          <button className="signup-social" type="button" onClick={() => window.location.assign(oauthStartUrl('google-workspace', '/onboarding/company', 'login'))}>
             <span className="signup-google">G</span> Sign up with Google
-          </button>
-          <button className="signup-social" type="button" onClick={() => window.location.assign(oauthStartUrl('microsoft-365', '/onboarding/company'))}>
-            <span className="signup-microsoft">◆</span> Sign up with Microsoft
           </button>
 
           <p className="signup-login-copy">Already have an account? <Link to="/login">Login</Link></p>

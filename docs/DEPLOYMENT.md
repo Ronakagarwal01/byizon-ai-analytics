@@ -39,11 +39,23 @@ STITCH_API_KEY=
 GOOGLE_CLOUD_PROJECT=
 GOOGLE_WORKSPACE_CLIENT_ID=
 GOOGLE_WORKSPACE_CLIENT_SECRET=
+BYIZON_SMTP_HOST=smtp.gmail.com
+BYIZON_SMTP_PORT=587
+BYIZON_SMTP_TLS=1
+BYIZON_SMTP_FROM=
+BYIZON_SMTP_USER=
+BYIZON_SMTP_PASSWORD=
 SLACK_CLIENT_ID=
 SLACK_CLIENT_SECRET=
 SLACK_SIGNING_SECRET=
 SLACK_WEBHOOK_URL=
 ```
+
+`BYIZON_SMTP_USER` and `BYIZON_SMTP_FROM` can use the same Gmail address.
+`BYIZON_SMTP_PASSWORD` must be a Google App Password created after enabling
+2-Step Verification; do not use or commit the normal Gmail password. Without
+SMTP configuration, development OTPs are written only to
+`backend/data/email_outbox.jsonl` (or `$BYIZON_DATA_DIR/email_outbox.jsonl`).
 
 ## Google OAuth production update
 

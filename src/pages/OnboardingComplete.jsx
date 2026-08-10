@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 import './PublicPages.css';
 import { useWorkspaceUser, workspaceInitials } from '../utils/workspaceUser';
+import { completeOnboarding } from '../api/universalBackend';
 
 const STEPS = [
   ['Company Information', 'Completed'],
@@ -64,8 +66,24 @@ const SHORTCUTS = [
 export default function OnboardingComplete() {
   const navigate = useNavigate();
   const workspaceUser = useWorkspaceUser();
+  const [activating, setActivating] = useState(false);
+  const [notice, setNotice] = useState(null);
   const profileName = workspaceUser.displayName || 'Workspace Admin';
   const profileInitials = workspaceInitials(workspaceUser);
+
+  const activateAccount = async destination => {
+    if (activating) return;
+    setActivating(true);
+    setNotice(null);
+    try {
+      const payload = await completeOnboarding();
+      localStorage.setItem('byizon_login_user', JSON.stringify({ ...workspaceUser, onboarding: payload.onboarding }));
+      navigate(destination);
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message || 'Account activate nahi ho paya.' });
+      setActivating(false);
+    }
+  };
 
   return (
     <main className="onboarding-page onboarding-team-page onboarding-complete-page">
@@ -135,6 +153,12 @@ export default function OnboardingComplete() {
             <p>Everything is set up. You can start exploring and getting AI-powered insights from your business data.</p>
           </div>
 
+          {notice && (
+            <div className={`signup-notice ${notice.type}`}>
+              <ShieldCheck size={18} /><span>{notice.text}</span>
+            </div>
+          )}
+
           <section className="complete-panel">
             <h3>What&apos;s ready for you</h3>
             <div className="complete-ready-grid">
@@ -167,10 +191,10 @@ export default function OnboardingComplete() {
               <button className="complete-back" type="button" onClick={() => navigate('/onboarding/ai-workspace')}>
                 <ArrowLeft size={16} /> Back
               </button>
-              <button className="signup-primary complete-dashboard" type="button" onClick={() => navigate('/dashboard')}>
-                Go to Dashboard <ArrowRight size={17} />
+              <button className="signup-primary complete-dashboard" type="button" onClick={() => activateAccount('/dashboard')} disabled={activating}>
+                {activating ? 'Activating account...' : 'Create Account & Open Dashboard'} <ArrowRight size={17} />
               </button>
-              <button className="complete-tour" type="button" onClick={() => navigate('/chat')}>
+              <button className="complete-tour" type="button" onClick={() => activateAccount('/chat')} disabled={activating}>
                 <PlayCircle size={17} /> Take a Quick Tour
               </button>
             </div>

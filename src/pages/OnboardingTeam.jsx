@@ -101,12 +101,6 @@ export default function OnboardingTeam() {
     }
   };
 
-  const skip = async () => {
-    if (saving) return;
-    setInvites(current => current.map(item => ({ ...item, email: '' })));
-    navigate('/onboarding/data-source');
-  };
-
   return (
     <main className="onboarding-page onboarding-team-page">
       <aside className="onboarding-rail onboarding-team-rail">
@@ -283,7 +277,6 @@ export default function OnboardingTeam() {
 
           <div className="onboarding-actions">
             <button type="button" className="onboarding-back" onClick={() => navigate('/onboarding/company')}><ArrowLeft size={16} /> Back</button>
-            <button type="button" className="onboarding-skip" onClick={skip} disabled={saving}>Skip for now</button>
             <button className="signup-primary onboarding-continue" type="submit" disabled={!canContinue || saving}>
               {saving ? 'Saving...' : 'Continue'} <ArrowRight size={17} />
             </button>
