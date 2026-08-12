@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { getCompanyOnboarding, saveCompanyOnboarding } from '../api/universalBackend';
 import './PublicPages.css';
+import './OnboardingOverrides.css';
 
 const STEPS = [
   ['Company Information', 'Basic details about your company'],
@@ -143,6 +144,20 @@ export default function OnboardingCompany() {
       window.setTimeout(() => navigate('/onboarding/team'), 550);
     } catch (error) {
       setNotice({ type: 'error', text: error.message || 'Company information save nahi ho payi.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const skipForNow = async () => {
+    if (saving) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      await saveCompanyOnboarding({ skipped: true });
+      navigate('/onboarding/team');
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message || 'Step skip nahi ho paya.' });
     } finally {
       setSaving(false);
     }
@@ -275,6 +290,7 @@ export default function OnboardingCompany() {
           </label>
 
           <div className="onboarding-actions">
+            <button className="onboarding-skip" type="button" onClick={skipForNow} disabled={saving}>Skip for now</button>
             <button className="signup-primary onboarding-continue" type="submit" disabled={!canContinue || saving}>
               {saving ? 'Saving...' : 'Continue'} <ArrowRight size={17} />
             </button>

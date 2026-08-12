@@ -49,7 +49,7 @@ export default function UploadPage() {
           </div>
 
           <div className="upload-panel-card">
-            <ExcelUploader onAnalysisComplete={() => navigate('/')} />
+            <ExcelUploader onAnalysisComplete={() => navigate('/dashboard')} />
             <QuickConnections />
           </div>
         </section>

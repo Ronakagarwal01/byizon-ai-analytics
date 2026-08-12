@@ -786,6 +786,30 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {uploadedData.analysisStatus === 'processing' && (
+          <div className="dashboard-analysis-progress" role="status" aria-live="polite">
+            <Loader2 size={16} className="pipeline-spinner-sm" />
+            <div className="dashboard-analysis-progress-copy">
+              <strong>Dashboard ready, advanced analysis is updating</strong>
+              <span>{uploadedData.processing?.message || 'Preparing deeper insights and report...'}</span>
+            </div>
+            <div className="dashboard-analysis-progress-meter" aria-hidden="true">
+              <i style={{ width: `${uploadedData.processing?.progress || 70}%` }} />
+            </div>
+            <b>{uploadedData.processing?.progress || 70}%</b>
+          </div>
+        )}
+
+        {uploadedData.analysisStatus === 'failed' && (
+          <div className="dashboard-analysis-progress is-warning" role="status">
+            <AlertTriangle size={16} />
+            <div className="dashboard-analysis-progress-copy">
+              <strong>Quick dashboard is ready</strong>
+              <span>Advanced analysis could not finish. Your uploaded data and current dashboard are still available.</span>
+            </div>
+          </div>
+        )}
+
         {/* Validation Engine Warnings Banner (Fix #9) */}
         {validationWarnings.length > 0 && (
           <div className="validation-banner">

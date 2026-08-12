@@ -43,3 +43,13 @@ tmp/
 output/
 .tmp-inspect/
 *-Ronak_HP*
+
+# Local visual QA captures and user-provided reference media
+/*-check*.png
+/tmp-*.png
+/*-visual-*.png
+/*.png
+/*.mp4
+/*.pdf
+/*.doc
+/*.docx

@@ -1,5 +1,10 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { clearBackendSession, getAuthSession, validateConnectedSource } from '../api/universalBackend';
+import {
+  clearBackendSession,
+  getAnalysisProgress,
+  getAuthSession,
+  validateConnectedSource,
+} from '../api/universalBackend';
 
 const DataContext = createContext(null);
 const CURRENT_ANALYSIS_VERSION = '2026-07-15-source-isolation-v8';
@@ -74,6 +79,7 @@ export function DataProvider({ children }) {
   const [pipelineStages, setPipelineStages] = useState([]);
   const [chatHistory, setChatHistoryState] = useState({});
   const validatedSessionRef = useRef(null);
+  const progressPollRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +159,7 @@ export function DataProvider({ children }) {
     modelResults: uploadedData.dataScience?.modelTraining,
     report: uploadedData.report,
     chatHistory: chatHistory[uploadedData.sessionId] || [],
-    analysisStatus: 'complete',
+    analysisStatus: uploadedData.analysisStatus || 'complete',
     createdAt: uploadedData.createdAt || new Date().toISOString(),
   } : null;
 
@@ -218,6 +224,53 @@ export function DataProvider({ children }) {
       console.warn('[DataContext] localStorage serialization failed:', error);
     }
   };
+
+  useEffect(() => {
+    const sessionId = uploadedData?.sessionId;
+    const status = uploadedData?.analysisStatus || uploadedData?.processing?.status;
+    if (!sessionId || status !== 'processing') return undefined;
+
+    let cancelled = false;
+    let consecutiveErrors = 0;
+    const poll = async () => {
+      try {
+        const result = await getAnalysisProgress(sessionId);
+        if (cancelled) return;
+        consecutiveErrors = 0;
+        if (result.analysis && ['complete', 'failed'].includes(result.status)) {
+          setUploadedData({ ...result.analysis, sessionId });
+          return;
+        }
+        setUploadedDataState(previous => previous?.sessionId === sessionId ? {
+          ...previous,
+          analysisStatus: result.status,
+          processing: {
+            ...(previous.processing || {}),
+            status: result.status,
+            progress: result.progress,
+            stage: result.stage,
+            message: result.message,
+          },
+        } : previous);
+        progressPollRef.current = window.setTimeout(poll, 1200);
+      } catch (error) {
+        if (cancelled) return;
+        consecutiveErrors += 1;
+        if (consecutiveErrors < 5) {
+          progressPollRef.current = window.setTimeout(poll, 1800);
+        } else {
+          console.warn('[DataContext] background analysis progress unavailable:', error);
+        }
+      }
+    };
+    progressPollRef.current = window.setTimeout(poll, 500);
+    return () => {
+      cancelled = true;
+      if (progressPollRef.current) window.clearTimeout(progressPollRef.current);
+    };
+    // Poll only while the active analysis is explicitly processing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadedData?.sessionId, uploadedData?.analysisStatus, uploadedData?.processing?.status]);
 
   useEffect(() => {
     const source = uploadedData?.connectedSource;

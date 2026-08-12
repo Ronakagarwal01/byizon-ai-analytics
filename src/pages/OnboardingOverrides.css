@@ -1,0 +1,513 @@
+/* Shared visual system for all five onboarding steps. */
+html:has(.onboarding-page),
+body:has(.onboarding-page) {
+  min-height: 100%;
+  background: #1c120f;
+  scrollbar-width: none;
+}
+
+html:has(.onboarding-page)::-webkit-scrollbar,
+body:has(.onboarding-page)::-webkit-scrollbar {
+  display: none;
+}
+
+html body #root .onboarding-page {
+  min-height: 100vh;
+  height: auto;
+  grid-template-columns: minmax(300px, 31vw) minmax(0, 1fr);
+  overflow: visible;
+  color: #fff8f2;
+  background:
+    linear-gradient(90deg, rgba(21, 11, 8, .74) 0%, rgba(35, 20, 15, .48) 43%, rgba(40, 22, 16, .24) 100%),
+    url('/assets/byizon-auth-background-clean.png') center center / cover fixed no-repeat !important;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html body #root .onboarding-page .onboarding-rail {
+  position: relative;
+  min-height: 100vh;
+  padding: 42px clamp(28px, 3vw, 48px) 36px;
+  overflow: visible;
+  filter: none !important;
+  background: rgba(20, 11, 8, .16) !important;
+  border-right: 1px solid rgba(255, 232, 217, .15);
+}
+
+html body #root .onboarding-page .onboarding-rail-art {
+  display: none !important;
+}
+
+html body #root .onboarding-page .onboarding-logo,
+html body #root .onboarding-page .onboarding-logo span,
+html body #root .onboarding-page .onboarding-logo small {
+  color: #fffaf6 !important;
+}
+
+html body #root .onboarding-page .onboarding-logo {
+  font-size: 38px;
+}
+
+html body #root .onboarding-page .onboarding-rail-heading {
+  margin-top: 58px;
+}
+
+html body #root .onboarding-page .onboarding-rail-heading h1 {
+  color: #fffaf6;
+  font-size: clamp(26px, 2.5vw, 34px);
+  letter-spacing: 0;
+}
+
+html body #root .onboarding-page .onboarding-rail-heading p {
+  max-width: 310px;
+  color: rgba(255, 244, 236, .78);
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+html body #root .onboarding-page .onboarding-steps {
+  gap: 16px;
+}
+
+html body #root .onboarding-page .onboarding-steps::before {
+  background: rgba(255, 231, 214, .22);
+}
+
+html body #root .onboarding-page .onboarding-steps article {
+  min-height: 72px;
+  padding: 12px;
+  border-radius: 8px;
+}
+
+html body #root .onboarding-page .onboarding-steps article.active {
+  border-color: rgba(240, 137, 76, .7);
+  background: rgba(74, 38, 24, .78);
+  box-shadow: 0 16px 38px rgba(0, 0, 0, .22);
+}
+
+html body #root .onboarding-page .onboarding-step-number,
+html body #root .onboarding-page .onboarding-step-icon {
+  color: #a84f22;
+  background: rgba(255, 250, 246, .94);
+  border-color: rgba(255, 232, 216, .28);
+}
+
+html body #root .onboarding-page .onboarding-steps article.active .onboarding-step-number,
+html body #root .onboarding-page .onboarding-steps article.done .onboarding-step-number {
+  color: #fff;
+  background: #bd5a29;
+}
+
+html body #root .onboarding-page .onboarding-steps strong {
+  color: #fffaf6;
+  font-size: 14px;
+}
+
+html body #root .onboarding-page .onboarding-steps small {
+  color: rgba(255, 241, 232, .68);
+  font-size: 12px;
+}
+
+html body #root .onboarding-page .onboarding-security-card {
+  left: clamp(28px, 3vw, 48px);
+  right: clamp(28px, 3vw, 48px);
+  bottom: 30px;
+  color: #fff8f2;
+  border-color: rgba(255, 224, 204, .18);
+  background: rgba(56, 27, 17, .88) !important;
+}
+
+html body #root .onboarding-page .onboarding-card-shell {
+  min-width: 0;
+  padding: 28px clamp(22px, 3.6vw, 56px);
+  background: transparent !important;
+}
+
+html body #root .onboarding-page .onboarding-card {
+  width: min(1080px, 100%);
+  min-height: calc(100vh - 56px);
+  padding: clamp(30px, 3.6vw, 48px);
+  overflow: visible;
+  color: #fff8f2;
+  border: 1px solid rgba(255, 230, 214, .2) !important;
+  border-radius: 8px;
+  background: rgba(35, 23, 19, .62) !important;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .26) !important;
+  backdrop-filter: blur(4px) !important;
+}
+
+html body #root .onboarding-page .onboarding-topline span {
+  color: #f2a272;
+  font-size: 13px;
+}
+
+html body #root .onboarding-page .onboarding-progress-bars i {
+  background: rgba(255, 244, 236, .18);
+}
+
+html body #root .onboarding-page .onboarding-progress-bars i.active,
+html body #root .onboarding-page .onboarding-progress-bars i.done {
+  background: #c86532;
+}
+
+html body #root .onboarding-page .onboarding-help,
+html body #root .onboarding-page .onboarding-back {
+  color: #fff8f2;
+  border-color: rgba(255, 232, 216, .24);
+  background: rgba(255, 250, 246, .08);
+}
+
+html body #root .onboarding-page .onboarding-title h2,
+html body #root .onboarding-page .team-hero h2,
+html body #root .onboarding-page h2,
+html body #root .onboarding-page h3,
+html body #root .onboarding-page strong {
+  color: #fffaf6 !important;
+  letter-spacing: 0;
+}
+
+html body #root .onboarding-page .onboarding-title h2,
+html body #root .onboarding-page .team-hero h2 {
+  font-size: clamp(32px, 4vw, 48px);
+}
+
+html body #root .onboarding-page .onboarding-title p,
+html body #root .onboarding-page .team-hero p,
+html body #root .onboarding-page p,
+html body #root .onboarding-page small {
+  color: rgba(255, 242, 233, .8) !important;
+}
+
+html body #root .onboarding-page .onboarding-field,
+html body #root .onboarding-page .team-message,
+html body #root .onboarding-page label {
+  color: #fff8f2 !important;
+}
+
+html body #root .onboarding-page .onboarding-input-wrap,
+html body #root .onboarding-page .onboarding-textarea-wrap,
+html body #root .onboarding-page .team-email-input,
+html body #root .onboarding-page .team-invite-row select,
+html body #root .onboarding-page .team-message div,
+html body #root .onboarding-page input,
+html body #root .onboarding-page select,
+html body #root .onboarding-page textarea {
+  color: #20140f;
+  border-color: rgba(255, 225, 207, .2);
+  background: rgba(255, 252, 249, .96) !important;
+}
+
+html body #root .onboarding-page .onboarding-input-wrap,
+html body #root .onboarding-page .onboarding-textarea-wrap,
+html body #root .onboarding-page .team-email-input,
+html body #root .onboarding-page .team-message div {
+  background: rgba(255, 252, 249, .96) !important;
+}
+
+html body #root .onboarding-page .onboarding-input-wrap input,
+html body #root .onboarding-page .onboarding-input-wrap select,
+html body #root .onboarding-page .onboarding-textarea-wrap textarea,
+html body #root .onboarding-page .team-email-input input,
+html body #root .onboarding-page .team-message textarea {
+  background: transparent !important;
+}
+
+html body #root .onboarding-page input::placeholder,
+html body #root .onboarding-page textarea::placeholder {
+  color: #8a7569;
+}
+
+html body #root .onboarding-page .onboarding-input-wrap:focus-within,
+html body #root .onboarding-page .onboarding-textarea-wrap:focus-within,
+html body #root .onboarding-page .team-email-input:focus-within,
+html body #root .onboarding-page .team-message div:focus-within {
+  border-color: #e48149;
+  box-shadow: 0 0 0 4px rgba(224, 112, 55, .18);
+}
+
+html body #root .onboarding-page .onboarding-upload-box,
+html body #root .onboarding-page .onboarding-preview,
+html body #root .onboarding-page .team-panel,
+html body #root .onboarding-page .team-benefits,
+html body #root .onboarding-page .team-testimonial,
+html body #root .onboarding-page .empty-invites,
+html body #root .onboarding-page .saved-invites article,
+html body #root .onboarding-page .role-grid label,
+html body #root .onboarding-page article,
+html body #root .onboarding-page [class*="panel"],
+html body #root .onboarding-page [class*="card"] article {
+  border-color: rgba(255, 226, 208, .16) !important;
+  background: rgba(255, 250, 246, .06) !important;
+  box-shadow: none !important;
+}
+
+html body #root .onboarding-page .role-grid label.active,
+html body #root .onboarding-page [class*="option"].active,
+html body #root .onboarding-page [class*="source"].active,
+html body #root .onboarding-page [class*="selected"] {
+  border-color: #dd7840 !important;
+  background: rgba(173, 77, 34, .24) !important;
+}
+
+html body #root .onboarding-page .onboarding-upload-box svg,
+html body #root .onboarding-page .team-benefits svg,
+html body #root .onboarding-page [class*="icon"] {
+  color: #e07b42;
+}
+
+html body #root .onboarding-page .signup-primary,
+html body #root .onboarding-page .onboarding-continue,
+html body #root .onboarding-page [class*="primary"] {
+  color: #fff;
+  border-color: #c55c29;
+  background: #b75223;
+  box-shadow: 0 14px 34px rgba(154, 62, 23, .28);
+}
+
+html body #root .onboarding-page .onboarding-skip {
+  color: #f2aa7c;
+}
+
+html body #root .onboarding-page .onboarding-actions {
+  border-color: rgba(255, 231, 216, .15);
+}
+
+html body #root .onboarding-page .onboarding-complete-footer {
+  color: #fff8f2;
+  border-color: rgba(255, 230, 214, .18);
+  background: rgba(24, 14, 11, .9);
+}
+
+@media (max-width: 1080px) {
+  html body #root .onboarding-page {
+    grid-template-columns: 1fr;
+    background-position: center;
+  }
+
+  html body #root .onboarding-page .onboarding-rail {
+    min-height: auto;
+    padding-bottom: 34px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 232, 217, .15);
+  }
+
+  html body #root .onboarding-page .onboarding-security-card {
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    margin-top: 28px;
+  }
+
+  html body #root .onboarding-page .onboarding-card {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  html body #root .onboarding-page .onboarding-card-shell,
+  html body #root .onboarding-page .onboarding-rail {
+    padding-inline: 16px;
+  }
+
+  html body #root .onboarding-page .onboarding-card {
+    padding: 24px 18px;
+  }
+
+  html body #root .onboarding-page .onboarding-title h2,
+  html body #root .onboarding-page .team-hero h2 {
+    font-size: 32px;
+  }
+}
+
+/* Final contrast pass: keep the landscape visible without sacrificing copy. */
+html body #root .onboarding-page {
+  background:
+    linear-gradient(90deg, rgba(20, 10, 7, .56) 0%, rgba(28, 16, 12, .26) 43%, rgba(35, 19, 13, .08) 100%),
+    url('/assets/byizon-auth-background-clean.png') center center / cover fixed no-repeat !important;
+}
+
+html body #root .onboarding-page .onboarding-rail {
+  background: rgba(18, 10, 7, .08) !important;
+}
+
+html body #root .onboarding-page .onboarding-card {
+  color: #fffaf6 !important;
+  background: rgba(34, 22, 18, .44) !important;
+  backdrop-filter: blur(.5px) !important;
+}
+
+html body #root .onboarding-page .onboarding-rail-heading h1 {
+  color: #fffaf6 !important;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, .46);
+}
+
+html body #root .onboarding-page .onboarding-title p,
+html body #root .onboarding-page .team-hero p,
+html body #root .onboarding-page .data-source-description,
+html body #root .onboarding-page .data-source-bullets span,
+html body #root .onboarding-page .ai-info-note p,
+html body #root .onboarding-page .ai-assistant-card p,
+html body #root .onboarding-page .ai-capabilities span,
+html body #root .onboarding-page .ai-privacy-card p,
+html body #root .onboarding-page .complete-success p,
+html body #root .onboarding-page .complete-ready-card p,
+html body #root .onboarding-page .complete-unlock p,
+html body #root .onboarding-page .empty-invites span,
+html body #root .onboarding-page .team-benefits span,
+html body #root .onboarding-page .team-testimonial small,
+html body #root .onboarding-page .role-grid small,
+html body #root .onboarding-page .saved-invites small {
+  color: rgba(255, 244, 236, .78) !important;
+}
+
+html body #root .onboarding-page .onboarding-steps strong,
+html body #root .onboarding-page .onboarding-steps small,
+html body #root .onboarding-page .team-section-title h3,
+html body #root .onboarding-page .role-grid strong,
+html body #root .onboarding-page .saved-invites strong,
+html body #root .onboarding-page .team-benefits h3,
+html body #root .onboarding-page .team-benefits strong,
+html body #root .onboarding-page .team-testimonial p,
+html body #root .onboarding-page .team-testimonial strong,
+html body #root .onboarding-page .empty-invites strong,
+html body #root .onboarding-page .data-source-heading strong,
+html body #root .onboarding-page .data-source-note strong,
+html body #root .onboarding-page .ai-assistant-card h3,
+html body #root .onboarding-page .ai-privacy-card strong,
+html body #root .onboarding-page .complete-panel h3,
+html body #root .onboarding-page .complete-ready-card strong,
+html body #root .onboarding-page .complete-unlock strong {
+  color: #fffaf6 !important;
+}
+
+html body #root .onboarding-page .onboarding-steps small {
+  color: rgba(255, 241, 232, .74) !important;
+}
+
+html body #root .onboarding-page .team-panel,
+html body #root .onboarding-page .team-benefits,
+html body #root .onboarding-page .team-testimonial,
+html body #root .onboarding-page .empty-invites,
+html body #root .onboarding-page .saved-invites article,
+html body #root .onboarding-page .role-grid label,
+html body #root .onboarding-page .data-source-option,
+html body #root .onboarding-page .data-source-note,
+html body #root .onboarding-page .ai-select-field,
+html body #root .onboarding-page .ai-info-note,
+html body #root .onboarding-page .ai-assistant-card,
+html body #root .onboarding-page .ai-privacy-card,
+html body #root .onboarding-page .complete-panel,
+html body #root .onboarding-page .complete-unlock {
+  color: #fffaf6 !important;
+  border-color: rgba(255, 231, 216, .24) !important;
+  background: rgba(40, 25, 20, .58) !important;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .12) !important;
+}
+
+html body #root .onboarding-page .role-grid label.active,
+html body #root .onboarding-page .data-source-option.selected {
+  border-color: #ef8248 !important;
+  background: rgba(126, 57, 27, .66) !important;
+}
+
+html body #root .onboarding-page .data-source-option:hover {
+  border-color: rgba(239, 130, 72, .72) !important;
+  background: rgba(76, 38, 24, .68) !important;
+}
+
+html body #root .onboarding-page .data-source-description,
+html body #root .onboarding-page .data-source-bullets span,
+html body #root .onboarding-page .data-source-recommend {
+  opacity: 1 !important;
+}
+
+html body #root .onboarding-page .data-source-chips small {
+  color: #5b2e1c !important;
+  background: rgba(255, 241, 231, .9) !important;
+}
+
+html body #root .onboarding-page .data-source-card-cta,
+html body #root .onboarding-page .data-source-note button,
+html body #root .onboarding-page .complete-shortcuts button {
+  color: #251711 !important;
+  border-color: rgba(255, 232, 216, .3) !important;
+  background: rgba(255, 252, 249, .94) !important;
+}
+
+html body #root .onboarding-page .data-source-option.selected .data-source-card-cta {
+  color: #fff !important;
+  background: #a6461c !important;
+}
+
+html body #root .onboarding-page .ai-select-field select {
+  min-height: 30px;
+  padding: 0 9px;
+  color: #251711 !important;
+  border-radius: 6px;
+  background: rgba(255, 252, 249, .96) !important;
+}
+
+html body #root .onboarding-page .ai-select-field strong {
+  color: #fffaf6 !important;
+}
+
+html body #root .onboarding-page .ai-assistant-card,
+html body #root .onboarding-page .ai-privacy-card {
+  background: rgba(38, 24, 19, .7) !important;
+}
+
+html body #root .onboarding-page .complete-ready-card {
+  background: rgba(255, 250, 246, .04) !important;
+  border-color: rgba(255, 230, 213, .18) !important;
+}
+
+html body #root .onboarding-page .complete-back,
+html body #root .onboarding-page .complete-tour,
+html body #root .onboarding-page .onboarding-back,
+html body #root .onboarding-page .onboarding-help {
+  color: #fffaf6 !important;
+  border-color: rgba(255, 231, 216, .28) !important;
+  background: rgba(32, 20, 16, .58) !important;
+}
+
+html body #root .onboarding-page .onboarding-skip,
+html body #root .onboarding-page .team-section-title button,
+html body #root .onboarding-page .team-add-email,
+html body #root .onboarding-page .ai-privacy-card button {
+  color: #ffb487 !important;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, .35);
+}
+
+html body #root .onboarding-page .onboarding-help {
+  min-width: 122px;
+  white-space: nowrap;
+}
+
+html body #root .onboarding-page .team-section-title span,
+html body #root .onboarding-page .data-source-recommend {
+  color: #ffc096 !important;
+}
+
+html body #root .onboarding-page .signup-primary,
+html body #root .onboarding-page .onboarding-continue,
+html body #root .onboarding-page .complete-dashboard {
+  color: #fff !important;
+  background: linear-gradient(135deg, #b85a2b, #963c17) !important;
+}
+
+html body #root .onboarding-page .data-source-profile strong,
+html body #root .onboarding-page .data-source-profile small {
+  color: #fffaf6 !important;
+}
+
+html body #root .onboarding-page .onboarding-complete-footer article {
+  background: rgba(255, 250, 246, .04) !important;
+}
+
+html body #root .onboarding-page .onboarding-complete-footer strong {
+  color: #fffaf6 !important;
+}
+
+html body #root .onboarding-page .onboarding-complete-footer span {
+  color: rgba(255, 241, 232, .72) !important;
+}

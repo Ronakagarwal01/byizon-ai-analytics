@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { getTeamOnboarding, saveTeamOnboarding } from '../api/universalBackend';
 import './PublicPages.css';
+import './OnboardingOverrides.css';
 
 const STEPS = [
   ['Company Information', 'Completed'],
@@ -96,6 +97,20 @@ export default function OnboardingTeam() {
       if (goNext) window.setTimeout(() => navigate('/onboarding/data-source'), 500);
     } catch (error) {
       setNotice({ type: 'error', text: error.message || 'Team invites save nahi ho paye.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const skipForNow = async () => {
+    if (saving) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      await saveTeamOnboarding({ invites: [], personalMessage: '' });
+      navigate('/onboarding/data-source');
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message || 'Step skip nahi ho paya.' });
     } finally {
       setSaving(false);
     }
@@ -277,6 +292,7 @@ export default function OnboardingTeam() {
 
           <div className="onboarding-actions">
             <button type="button" className="onboarding-back" onClick={() => navigate('/onboarding/company')}><ArrowLeft size={16} /> Back</button>
+            <button type="button" className="onboarding-skip" onClick={skipForNow} disabled={saving}>Skip for now</button>
             <button className="signup-primary onboarding-continue" type="submit" disabled={!canContinue || saving}>
               {saving ? 'Saving...' : 'Continue'} <ArrowRight size={17} />
             </button>

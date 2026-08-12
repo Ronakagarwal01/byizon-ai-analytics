@@ -17,6 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import './PublicPages.css';
+import './OnboardingOverrides.css';
 import { useWorkspaceUser, workspaceInitials } from '../utils/workspaceUser';
 import { saveDataSourceOnboarding } from '../api/universalBackend';
 
@@ -84,6 +85,21 @@ export default function OnboardingDataSource() {
       navigate('/onboarding/ai-workspace');
     } catch (error) {
       setNotice({ type: 'error', text: error.message || 'Data source save nahi ho paya.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const skipForNow = async () => {
+    if (saving) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      await saveDataSourceOnboarding('later');
+      localStorage.setItem('byizon_onboarding_data_source', 'later');
+      navigate('/onboarding/ai-workspace');
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message || 'Step skip nahi ho paya.' });
     } finally {
       setSaving(false);
     }
@@ -207,6 +223,7 @@ export default function OnboardingDataSource() {
 
           <div className="onboarding-actions data-source-bottom-actions">
             <button type="button" className="onboarding-back" onClick={() => navigate('/onboarding/team')}><ArrowLeft size={16} /> Back</button>
+            <button type="button" className="onboarding-skip" onClick={skipForNow} disabled={saving}>Skip for now</button>
             <button className="signup-primary onboarding-continue" type="submit" disabled={saving || !selectedSource}>
               {saving ? 'Saving...' : 'Continue'} <ArrowRight size={17} />
             </button>

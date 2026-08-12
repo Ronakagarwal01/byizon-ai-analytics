@@ -9,7 +9,7 @@ connector storage, sharing, PDF export, and optional AI/voice integrations.
 
 - Frontend: React 19, Vite 8, React Router, Recharts, PapaParse, SheetJS
 - Backend: Python, Uvicorn, pandas, NumPy, scikit-learn, Matplotlib
-- Storage: local SQLite databases under `backend/data/`
+- Storage: PostgreSQL analytics warehouse in production; isolated SQLite fallback for local development
 - Delivery: Docker, Render, Vercel, and GitHub Actions configuration
 
 ## Project structure
@@ -78,6 +78,26 @@ executable is not available as `python`.
 Copy `.env.example` to `.env` and fill only the integrations you use. Never
 commit `.env`, `backend/data/`, connector keys, session keys, or SQLite files.
 Existing local data is preserved during normal cleanup.
+
+## Database-first analytics
+
+Uploaded CSV/Excel and other supported structured files follow this path:
+
+1. The original file is committed to workspace-scoped storage before analysis.
+2. The source is parsed once; PostgreSQL uses `COPY` to bulk-load every parsed row.
+3. A deterministic dashboard (schema, quality, KPIs, filters, and charts) is returned immediately.
+4. Advanced ML and report enrichment continue in a bounded background worker and update the same session.
+5. Cells are normalized into domain-neutral numeric, date, dimension, and quality fields.
+6. Only the static, parameterized query catalog can read analytical evidence.
+7. The AI receives a bounded JSON summary of aggregates, top dimensions, date coverage, and data quality. Raw rows, identifiers, and sensitive column values are excluded.
+
+Set `DATABASE_URL` to a PostgreSQL connection string in production. If it is
+empty, local development uses `backend/data/analytics_warehouse.sqlite3` (or
+`BYIZON_SQLITE_ANALYTICS_PATH`) with the same query contract. The Render
+Blueprint provisions and wires `byizon-analytics-db` automatically.
+`BYIZON_BACKGROUND_WORKERS` controls advanced-analysis concurrency (default `2`;
+keep it between `1` and `4`). No API key is required for parsing, SQL analysis,
+the quick dashboard, or background processing. `HF_API_KEY` remains optional.
 
 ## Documentation
 

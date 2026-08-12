@@ -1,3 +1,9 @@
+databases:
+  - name: byizon-analytics-db
+    plan: free
+    databaseName: byizon_analytics
+    user: byizon
+
 services:
   - type: web
     name: byizon-ai-analytics
@@ -12,6 +18,12 @@ services:
     envVars:
       - key: BYIZON_DATA_DIR
         value: /var/data
+      - key: DATABASE_URL
+        fromDatabase:
+          name: byizon-analytics-db
+          property: connectionString
+      - key: BYIZON_BACKGROUND_WORKERS
+        value: "2"
       - key: BYIZON_SESSION_SECRET
         generateValue: true
       - key: BYIZON_CONNECTOR_ENCRYPTION_KEY
@@ -27,7 +39,7 @@ services:
       - key: FRONTEND_ORIGINS
         sync: false
       - key: BYIZON_AUTH_DISABLED
-        value: "true"
+        value: "false"
       - key: BYIZON_SMTP_HOST
         sync: false
       - key: BYIZON_SMTP_PORT

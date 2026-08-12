@@ -339,6 +339,8 @@ def create_account(payload: dict[str, Any]) -> dict[str, Any]:
                     phone_number = ?,
                     password_hash = ?,
                     terms_accepted = ?,
+                    email_verified = 1,
+                    email_verified_at = ?,
                     updated_at = ?
                 WHERE user_id = ?
                 """,
@@ -351,13 +353,13 @@ def create_account(payload: dict[str, Any]) -> dict[str, Any]:
                     sqlite3.Binary(password_hash),
                     1,
                     now,
+                    now,
                     existing["user_id"],
                 ),
             )
-            delivery = _issue_email_otp(db, existing["user_id"], work_email, first_name)
             db.commit()
             row = db.execute("SELECT * FROM workspace_accounts WHERE user_id = ?", (existing["user_id"],)).fetchone()
-            return {**_safe_account(row), "otpDelivery": delivery, "pendingVerification": True}
+            return {**_safe_account(row), "onboarding": get_onboarding_status(existing["user_id"])}
 
         try:
             db.execute(
@@ -365,9 +367,9 @@ def create_account(payload: dict[str, Any]) -> dict[str, Any]:
                 INSERT INTO workspace_accounts (
                     user_id, first_name, last_name, work_email, company_name,
                     phone_country_code, phone_number, password_hash, terms_accepted,
-                    provider, created_at, updated_at
+                    provider, created_at, updated_at, email_verified, email_verified_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'password', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'password', ?, ?, 1, ?)
                 """,
                 (
                     user_id,
@@ -381,15 +383,14 @@ def create_account(payload: dict[str, Any]) -> dict[str, Any]:
                     1,
                     now,
                     now,
+                    now,
                 ),
             )
             db.commit()
         except sqlite3.IntegrityError as exc:
             raise AccountExistsError("An account already exists with this work email.") from exc
-        delivery = _issue_email_otp(db, user_id, work_email, first_name)
-        db.commit()
         row = db.execute("SELECT * FROM workspace_accounts WHERE user_id = ?", (user_id,)).fetchone()
-    return {**_safe_account(row), "otpDelivery": delivery}
+    return {**_safe_account(row), "onboarding": get_onboarding_status(user_id)}
 
 
 def resolve_oauth_account(provider: str, provider_subject: str, email: str, display_name: str) -> str:
@@ -837,7 +838,7 @@ def save_data_source_onboarding(user_id: str, payload: dict[str, Any]) -> dict[s
     source = _clean(payload.get("dataSource"))
     if not user_id.startswith("usr_"):
         raise ValueError("Valid workspace session is required.")
-    if source not in {"upload", "apps", "database"}:
+    if source not in {"upload", "apps", "database", "later"}:
         raise ValueError("Choose a valid data source to continue.")
     with closing(_database()) as db:
         _advance_onboarding(db, user_id, 4, source)
@@ -851,8 +852,8 @@ def complete_onboarding(user_id: str) -> dict[str, Any]:
     if not user_id.startswith("usr_"):
         raise ValueError("Valid workspace session is required.")
     with closing(_database()) as db:
-        company = db.execute("SELECT 1 FROM workspace_onboarding_company WHERE user_id = ? AND skipped = 0", (user_id,)).fetchone()
-        ai_workspace = db.execute("SELECT 1 FROM workspace_onboarding_ai WHERE user_id = ? AND skipped = 0", (user_id,)).fetchone()
+        company = db.execute("SELECT 1 FROM workspace_onboarding_company WHERE user_id = ?", (user_id,)).fetchone()
+        ai_workspace = db.execute("SELECT 1 FROM workspace_onboarding_ai WHERE user_id = ?", (user_id,)).fetchone()
         status = _status_row(db, user_id)
         if not company:
             raise ValueError("Complete Company Information before activating your account.")

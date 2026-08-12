@@ -74,27 +74,32 @@ def build_structured_json(evidence: dict[str, Any]) -> dict[str, Any]:
     """Build the only data object an external model is allowed to see."""
     runtime = evidence.get("runtimeEvidence") or {}
     dataset = evidence.get("dataset") or {}
+    sql_warehouse = evidence.get("sqlWarehouseEvidence") or {}
+    sql_dataset = sql_warehouse.get("dataset") or {}
     context_evidence = evidence.get("evidence") or {}
     post_sql = evidence.get("postSqlProcessing") or {}
 
     structured = {
         "metadata": {
-            "fileName": dataset.get("fileName"),
-            "rowCount": dataset.get("rowCount"),
-            "columnCount": dataset.get("columnCount") or dataset.get("colCount"),
-            "datasetType": dataset.get("datasetType"),
-            "domain": (evidence.get("intent") or {}).get("domain"),
+            "fileName": sql_dataset.get("fileName") or dataset.get("fileName"),
+            "rowCount": sql_dataset.get("rowCount") or dataset.get("rowCount"),
+            "columnCount": sql_dataset.get("columnCount") or dataset.get("columnCount") or dataset.get("colCount"),
+            "datasetType": sql_dataset.get("datasetType") or dataset.get("datasetType"),
+            "domain": sql_dataset.get("domain") or (evidence.get("intent") or {}).get("domain"),
         },
         "userQuestion": evidence.get("question"),
         "businessContext": {
             "intent": (evidence.get("queryPlan") or {}).get("intent"),
             "selectedMetrics": (evidence.get("queryPlan") or {}).get("selectedMetrics"),
             "policy": evidence.get("policy"),
+            "sqlPolicy": runtime.get("sqlPolicy"),
         },
         "kpis": runtime.get("kpis") or context_evidence.get("kpis"),
         "aggregations": runtime.get("aggregations") or context_evidence.get("aggregations"),
         "timeSeries": runtime.get("timeSeries") or context_evidence.get("timeSeries"),
         "topRecords": runtime.get("topRecords") or context_evidence.get("topRecords"),
+        "topValues": runtime.get("topValues"),
+        "timeCoverage": runtime.get("timeCoverage"),
         "summary": runtime.get("summary") or context_evidence.get("summary"),
         "dataQuality": runtime.get("dataQuality") or context_evidence.get("dataQuality"),
         "evidence": runtime.get("metrics") or context_evidence.get("metrics") or evidence.get("metricRegistry"),
@@ -113,7 +118,7 @@ def _fit_to_budget(value: dict[str, Any]) -> dict[str, Any]:
     if len(encoded.encode("utf-8")) <= MAX_JSON_BYTES:
         return value
     trimmed = dict(value)
-    for key in ("evidence", "aggregations", "topRecords", "timeSeries"):
+    for key in ("evidence", "aggregations", "topRecords", "topValues", "timeCoverage", "timeSeries"):
         if isinstance(trimmed.get(key), list):
             trimmed[key] = trimmed[key][:10]
         elif isinstance(trimmed.get(key), dict):

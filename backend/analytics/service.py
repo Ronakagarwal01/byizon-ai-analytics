@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -120,8 +120,8 @@ def _records(df: pd.DataFrame, limit: int = 5000) -> list[dict[str, Any]]:
     return _jsonable(clean.to_dict(orient="records"))
 
 
-def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
-    parsed = parse_file(file_name, content)
+def prepare_analysis(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Compute the deterministic dashboard once and retain reusable deep-analysis inputs."""
     base_schema = detect_schema(parsed)
     profile = build_data_profile(parsed, base_schema)
     domain_result = detect_domain(parsed, profile)
@@ -129,7 +129,6 @@ def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
     stats_result = build_statistics(parsed, schema, profile)
     kpi_result = compute_metrics(parsed, schema, profile, stats_result)
     anomaly_result = build_anomaly_analysis(profile, schema)
-    data_science_result = _safe_data_science_workflow(parsed, schema, profile, stats_result, anomaly_result)
     dashboard_plan = build_dashboard_plan(parsed, schema, profile, stats_result, anomaly_result)
     planned_kpis = dashboard_plan["overview_cards"] + dashboard_plan["story_cards"]
     kpi_result["kpis"] = planned_kpis
@@ -138,8 +137,6 @@ def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
     insight_result = generate_insights(schema, profile, kpi_result, anomaly_result)
     _merge_dashboard_plan_insights(insight_result, dashboard_plan)
     _merge_root_cause_patterns(insight_result, root_cause_result)
-    report_result = generate_report(parsed, schema, profile, kpi_result, chart_result, insight_result, anomaly_result, root_cause_result, data_science_result)
-
     primary_table = next(table for table in parsed["tables"] if table.name == schema["primaryTable"])
     primary_profile = next(table for table in profile["tableProfiles"] if table["name"] == schema["primaryTable"])
     data_quality = {
@@ -166,9 +163,72 @@ def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
         for table in parsed["tables"]
     ]
 
+    return {
+        "parsed": parsed,
+        "profile": profile,
+        "schema": schema,
+        "statsResult": stats_result,
+        "kpiResult": kpi_result,
+        "anomalyResult": anomaly_result,
+        "dashboardPlan": dashboard_plan,
+        "rootCauseResult": root_cause_result,
+        "chartResult": chart_result,
+        "insightResult": insight_result,
+        "primaryTable": primary_table,
+        "dataQuality": data_quality,
+        "tableSummaries": table_summaries,
+    }
+
+
+def build_analysis_result(
+    prepared: dict[str, Any],
+    *,
+    include_data_science: bool = True,
+    on_progress: Callable[[int, str, str], None] | None = None,
+) -> dict[str, Any]:
+    """Render a quick dashboard or enrich the same prepared analysis with ML outputs."""
+    parsed = prepared["parsed"]
+    profile = prepared["profile"]
+    schema = prepared["schema"]
+    stats_result = prepared["statsResult"]
+    kpi_result = prepared["kpiResult"]
+    anomaly_result = prepared["anomalyResult"]
+    dashboard_plan = prepared["dashboardPlan"]
+    root_cause_result = prepared["rootCauseResult"]
+    chart_result = prepared["chartResult"]
+    insight_result = prepared["insightResult"]
+    primary_table = prepared["primaryTable"]
+
+    if include_data_science:
+        if on_progress:
+            on_progress(78, "advanced_analysis", "Running advanced statistical and ML analysis...")
+        data_science_result = _safe_data_science_workflow(
+            parsed,
+            schema,
+            profile,
+            stats_result,
+            anomaly_result,
+        )
+        if on_progress:
+            on_progress(92, "report_generation", "Preparing the enriched dashboard and report...")
+    else:
+        data_science_result = _pending_data_science_result()
+
+    report_result = generate_report(
+        parsed,
+        schema,
+        profile,
+        kpi_result,
+        chart_result,
+        insight_result,
+        anomaly_result,
+        root_cause_result,
+        data_science_result if include_data_science else None,
+    )
+
     result = {
         "analysisVersion": ANALYSIS_VERSION,
-        "pipelineVersion": "3.0-universal-python-pandas",
+        "pipelineVersion": "3.1-single-parse-background-enrichment",
         "engineType": "python-pandas",
         "model": "Universal File Analytics Engine",
         "provider": "local-python",
@@ -179,7 +239,7 @@ def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
         "businessDomain": schema["businessDomain"],
         "detectionConfidence": schema["confidence"],
         "primaryTable": schema["primaryTable"],
-        "tables": table_summaries,
+        "tables": prepared["tableSummaries"],
         "tableProfiles": profile["tableProfiles"],
         "relationships": schema["relationships"],
         "schema": schema,
@@ -194,7 +254,7 @@ def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
         "dashboard_plan": dashboard_plan,
         "dataScience": data_science_result,
         "mlAnalysis": data_science_result,
-        "dataQuality": data_quality,
+        "dataQuality": prepared["dataQuality"],
         "dataQualitySummary": anomaly_result["dataQualitySummary"],
         "missingValueSummary": anomaly_result["missingValueSummary"],
         "outlierSummary": anomaly_result["outlierSummary"],
@@ -233,6 +293,44 @@ def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
     }
     result["llmContext"] = _build_llm_context(result)
     return _jsonable(result)
+
+
+def analyze_parsed_file(
+    file_name: str,
+    parsed: dict[str, Any],
+    *,
+    include_data_science: bool = True,
+) -> dict[str, Any]:
+    del file_name  # The verified parser result is the source of truth for the file name.
+    prepared = prepare_analysis(parsed)
+    return build_analysis_result(prepared, include_data_science=include_data_science)
+
+
+def analyze_file(file_name: str, content: bytes) -> dict[str, Any]:
+    parsed = parse_file(file_name, content)
+    return analyze_parsed_file(file_name, parsed)
+
+
+def _pending_data_science_result() -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "status": "processing",
+        "eda": {},
+        "taskDetection": {
+            "taskType": "processing",
+            "reason": "The quick dashboard is ready while advanced analysis runs in the background.",
+            "requiresTargetSelection": False,
+        },
+        "featureEngineering": {"createdFeatures": [], "featureCount": 0},
+        "preprocessing": {"steps": [], "numericFeatures": [], "categoricalFeatures": [], "skippedFeatures": []},
+        "modelTraining": {"trained": False, "reason": "Background analysis is still running.", "modelComparison": [], "bestModel": None, "featureImportance": []},
+        "clustering": {"trained": False, "reason": "Background analysis is still running.", "models": [], "bestModel": None},
+        "visualizations": {"plots": [], "plotCount": 0},
+        "insights": [],
+        "recommendations": [],
+        "conclusion": "The deterministic dashboard is ready. Advanced analysis is still running.",
+        "dashboard": {"cards": [], "plots": [], "sections": []},
+    }
 
 
 def _safe_data_science_workflow(

@@ -9,14 +9,23 @@ from typing import Any
 from uuid import uuid4
 
 from ..connection_store import DATA_DIR
+from .sql_warehouse import reassign_dataset_owner
 
 
 DATABASE_PATH = DATA_DIR / "connections.sqlite3"
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def _database() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    database = sqlite3.connect(DATABASE_PATH)
+    database = sqlite3.connect(DATABASE_PATH, factory=_ClosingConnection)
     database.row_factory = sqlite3.Row
     database.execute("PRAGMA foreign_keys = ON")
     database.execute(
@@ -143,6 +152,32 @@ def save_session(session: dict[str, Any], dataset_id: str | None = None) -> dict
     return session
 
 
+def save_session_analysis(
+    session_id: str,
+    analysis: dict[str, Any],
+    analysis_status: str,
+    owner_user_id: str | None = None,
+) -> bool:
+    query = """
+        UPDATE analysis_sessions
+        SET analysis_json = ?, analysis_status = ?, updated_at = ?
+        WHERE session_id = ?
+    """
+    parameters: tuple[Any, ...] = (
+        json.dumps(analysis, ensure_ascii=False),
+        analysis_status,
+        time.time(),
+        session_id,
+    )
+    if owner_user_id:
+        query += " AND owner_user_id = ?"
+        parameters += (owner_user_id,)
+    with _database() as database:
+        cursor = database.execute(query, parameters)
+        database.commit()
+        return cursor.rowcount > 0
+
+
 def load_session(session_id: str, owner_user_id: str | None = None) -> dict[str, Any] | None:
     query = "SELECT * FROM analysis_sessions WHERE session_id = ?"
     params: tuple[Any, ...] = (session_id,)
@@ -195,4 +230,5 @@ def reassign_sessions(previous_owner_user_id: str, owner_user_id: str) -> int:
             (owner_user_id, previous_owner_user_id),
         )
         database.commit()
-    return cursor.rowcount
+    warehouse_count = reassign_dataset_owner(previous_owner_user_id, owner_user_id)
+    return int(cursor.rowcount or 0) + warehouse_count

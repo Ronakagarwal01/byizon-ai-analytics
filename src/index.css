@@ -14396,6 +14396,36 @@ html body main.signup-page:not(.login-page):not(.verify-email-page) .signup-logi
 .history-item small {
   color: var(--text-muted);
 }
+.history-context-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 204px;
+  padding: 6px;
+  background: #fffaf6;
+  border: 1px solid #ead7ca;
+  border-radius: 7px;
+  box-shadow: 0 14px 34px rgba(73, 40, 25, 0.2);
+}
+.history-context-menu button {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  color: #b42318;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.history-context-menu button:hover,
+.history-context-menu button:focus-visible {
+  background: #fff0ec;
+  outline: none;
+}
 .view-all-btn {
   width: 100%;
   background: white;
@@ -17088,6 +17118,64 @@ html body #root .dashboard-page .chart-card-header {
 
 html body #root .dashboard-page .dashboard-source-strip {
   min-height: 58px !important;
+}
+
+html body #root .dashboard-page .dashboard-analysis-progress {
+  display: grid;
+  grid-template-columns: auto minmax(220px, 1fr) minmax(160px, 320px) auto;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 18px;
+  padding: 13px 16px;
+  color: #172033;
+  background: rgba(255, 252, 248, 0.94);
+  border: 1px solid rgba(168, 89, 45, 0.24);
+  border-radius: 7px;
+  box-shadow: 0 12px 28px rgba(88, 48, 28, 0.08);
+}
+
+html body #root .dashboard-page .dashboard-analysis-progress-copy {
+  display: grid;
+  gap: 2px;
+}
+
+html body #root .dashboard-page .dashboard-analysis-progress-copy strong {
+  font-size: 14px;
+}
+
+html body #root .dashboard-page .dashboard-analysis-progress-copy span {
+  color: #765f52;
+  font-size: 12px;
+}
+
+html body #root .dashboard-page .dashboard-analysis-progress-meter {
+  height: 7px;
+  overflow: hidden;
+  background: #eadfd7;
+  border-radius: 999px;
+}
+
+html body #root .dashboard-page .dashboard-analysis-progress-meter i {
+  display: block;
+  height: 100%;
+  background: #aa5f35;
+  border-radius: inherit;
+  transition: width 300ms ease;
+}
+
+html body #root .dashboard-page .dashboard-analysis-progress.is-warning {
+  grid-template-columns: auto 1fr;
+  border-color: rgba(184, 107, 61, 0.34);
+}
+
+@media (max-width: 900px) {
+  html body #root .dashboard-page .dashboard-analysis-progress {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  html body #root .dashboard-page .dashboard-analysis-progress-meter {
+    grid-column: 1 / -1;
+  }
 }
 
 html body #root .dashboard-page .dataset-overview-label,

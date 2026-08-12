@@ -25,7 +25,8 @@ import {
   TrendingUp,
   AlertCircle,
   ExternalLink,
-  Target
+  Target,
+  Trash2
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { getConnectors, oauthStartUrl } from '../api/universalBackend';
@@ -34,7 +35,7 @@ import { useWorkspaceUser, workspaceInitials } from '../utils/workspaceUser';
 
 export default function Chat() {
   const navigate = useNavigate();
-  const { chatHistory } = useData();
+  const { chatHistory, setSessionChatHistory } = useData();
   const user = useWorkspaceUser();
   const initials = workspaceInitials(user);
   const displayName = user.displayName || 'Super Admin';
@@ -48,15 +49,34 @@ export default function Chat() {
       return [];
     }
   });
-  const [activeSessionId, setActiveSessionId] = useState(() => localStorage.getItem('byizon_active_chat_session') || '');
-  const activeSessionIdRef = useRef(activeSessionId);
-  const skipAutoRestoreRef = useRef(false);
+  const [activeSessionId, setActiveSessionId] = useState('');
+  const activeSessionIdRef = useRef('');
+  const [historyMenu, setHistoryMenu] = useState(null);
   const [connectorCatalog, setConnectorCatalog] = useState([]);
   const [connectedApps, setConnectedApps] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
   const fileInputRef = useRef(null);
   const [rightPanelMode, setRightPanelMode] = useState('history'); // history, meeting, data
   const bottomRef = useRef(null);
+
+  useEffect(() => {
+    localStorage.removeItem('byizon_active_chat_session');
+  }, []);
+
+  useEffect(() => {
+    const closeMenu = () => setHistoryMenu(null);
+    const closeMenuOnEscape = event => {
+      if (event.key === 'Escape') closeMenu();
+    };
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('blur', closeMenu);
+    window.addEventListener('keydown', closeMenuOnEscape);
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('blur', closeMenu);
+      window.removeEventListener('keydown', closeMenuOnEscape);
+    };
+  }, []);
 
   const refreshConnectedApps = useCallback(() => getConnectors()
     .then(payload => {
@@ -109,7 +129,8 @@ export default function Chat() {
         };
       })
       .filter(Boolean);
-    const sessions = [...storedSessions, ...chatSessions]
+    const sessions = Array.from(new Map([...storedSessions, ...chatSessions]
+      .map(session => [session.id, session])).values())
       .filter(session => session?.messages?.some(item => item?.text))
       .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
     const query = historySearch.trim().toLowerCase();
@@ -173,7 +194,6 @@ export default function Chat() {
     if (!activeSessionIdRef.current) {
       activeSessionIdRef.current = sessionId;
       setActiveSessionId(sessionId);
-      localStorage.setItem('byizon_active_chat_session', sessionId);
     }
     persistSessions(previous => [session, ...previous.filter(item => item.id !== sessionId)].slice(0, 40));
     return sessionId;
@@ -184,34 +204,36 @@ export default function Chat() {
   }, [messages]);
 
   useEffect(() => {
-    if (skipAutoRestoreRef.current) {
-      skipAutoRestoreRef.current = false;
-      return;
-    }
-    if (!activeSessionId || messages.length) return;
-    const activeSession = chatSessions.find(item => item.id === activeSessionId);
-    if (activeSession?.messages?.length) setMessages(activeSession.messages);
-  }, [activeSessionId, chatSessions, messages.length]);
-
-  useEffect(() => {
     const startNewChat = () => {
       setMessages(current => {
         upsertActiveSession(current);
         return [];
       });
-      const nextSessionId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      skipAutoRestoreRef.current = true;
-      activeSessionIdRef.current = nextSessionId;
-      setActiveSessionId(nextSessionId);
-      localStorage.setItem('byizon_active_chat_session', nextSessionId);
+      activeSessionIdRef.current = '';
+      setActiveSessionId('');
+      localStorage.removeItem('byizon_active_chat_session');
       setInput('');
       setRightPanelMode('history');
+      setHistoryMenu(null);
     };
     window.addEventListener('byizon:new-chat', startNewChat);
     return () => window.removeEventListener('byizon:new-chat', startNewChat);
     // upsertActiveSession uses refs/state setters and should only attach the global listener once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const deleteConversation = (sessionId) => {
+    persistSessions(previous => previous.filter(item => item.id !== sessionId));
+    setSessionChatHistory(sessionId, []);
+    if (activeSessionIdRef.current === sessionId) {
+      activeSessionIdRef.current = '';
+      setActiveSessionId('');
+      setMessages([]);
+      setInput('');
+    }
+    localStorage.removeItem('byizon_active_chat_session');
+    setHistoryMenu(null);
+  };
 
   const handleSend = (e) => {
     e?.preventDefault();
@@ -565,11 +587,19 @@ export default function Chat() {
                     className={`history-item ${item.id === activeSessionId ? 'active' : ''}`}
                     key={item.id}
                     onClick={() => {
+                      setHistoryMenu(null);
                       activeSessionIdRef.current = item.id;
                       setActiveSessionId(item.id);
-                      localStorage.setItem('byizon_active_chat_session', item.id);
                       setMessages(item.messages || []);
                       setRightPanelMode('history');
+                    }}
+                    onContextMenu={event => {
+                      event.preventDefault();
+                      setHistoryMenu({
+                        id: item.id,
+                        x: Math.min(event.clientX, window.innerWidth - 220),
+                        y: Math.min(event.clientY, window.innerHeight - 72),
+                      });
                     }}
                   >
                     <span>{item.title}</span>
@@ -582,6 +612,20 @@ export default function Chat() {
                   </div>
                 )}
               </div>
+
+              {historyMenu && (
+                <div
+                  className="history-context-menu"
+                  role="menu"
+                  style={{ left: historyMenu.x, top: historyMenu.y }}
+                  onClick={event => event.stopPropagation()}
+                >
+                  <button type="button" role="menuitem" onClick={() => deleteConversation(historyMenu.id)}>
+                    <Trash2 size={16} />
+                    Delete conversation
+                  </button>
+                </div>
+              )}
 
               <button className="view-all-btn">View All Conversations</button>
             </div>

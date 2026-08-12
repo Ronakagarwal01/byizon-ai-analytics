@@ -4,7 +4,7 @@
 
 **Document status:** Current implementation mapped from the codebase  
 **Architecture style:** Database-first, deterministic analytics, evidence-grounded AI  
-**Primary stack:** React, Vite, Python, Pandas, scikit-learn, SQLite, OAuth 2.0
+**Primary stack:** React, Vite, Python, Pandas, scikit-learn, PostgreSQL, SQLite fallback, OAuth 2.0
 
 ---
 
@@ -303,28 +303,27 @@ The standard analytics chatbot currently uses the deterministic Python answer en
 
 ---
 
-## 7. SQL Generator Position
+## 7. SQL Analytics Position
 
-The current application analyzes uploaded files with Pandas after persisting them in SQLite. It does **not** currently depend on model-generated SQL for ordinary file questions.
+The application parses each source once and persists every parsed table and row in the SQL analytics warehouse. PostgreSQL ingestion uses `COPY`; local SQLite uses batched `executemany`. A deterministic dashboard is returned before advanced ML/report enrichment, which continues in a bounded background worker and updates the same analysis session. A static, parameterized query catalog calculates bounded numeric profiles, dimension counts, date coverage, and quality evidence. Pandas remains the deterministic ingestion and advanced-analysis engine; the LLM never receives the full spreadsheet and never generates SQL.
 
-For a future warehouse architecture, the safe flow should be:
+The implemented safe flow is:
 
 ```mermaid
 flowchart LR
     Q["User Question"]
     Intent["Intent Detection"]
-    Plan["Typed Query Plan"]
-    Compiler["Validated Read-only SQL Compiler"]
-    Guard["Schema, scope and cost guard"]
+    Catalog["Static Query Catalog"]
+    Guard["Workspace, dataset and result-limit guard"]
     Warehouse[("PostgreSQL / Warehouse")]
     Process["Aggregate and Validate"]
     JSON["Safe Evidence JSON"]
     Explain["LLM Explanation"]
 
-    Q --> Intent --> Plan --> Compiler --> Guard --> Warehouse --> Process --> JSON --> Explain
+    Q --> Intent --> Catalog --> Guard --> Warehouse --> Process --> JSON --> Explain
 ```
 
-The model should create a typed query plan. A trusted compiler should produce parameterized, read-only SQL. Arbitrary LLM SQL should never run directly against production data.
+The backend selects from prebuilt query templates and binds dataset/workspace parameters. User text only ranks returned evidence by relevance. Arbitrary LLM SQL never runs against production data.
 
 ---
 
@@ -517,6 +516,9 @@ The report exporter creates a PDF from verified analysis. When password protecti
 | Store | Purpose | Important ownership/security rule |
 |---|---|---|
 | `uploaded_datasets` | Original file bytes and source metadata | Dataset belongs to one workspace owner |
+| `analytics_sources`, `analytics_tables`, `analytics_rows` | PostgreSQL copy of uploaded sources and all parsed rows | Every read requires dataset and workspace scope |
+| `analytics_columns`, `analytics_cells` | Domain-neutral SQL representation used by the query catalog | Sensitive and identifier values are excluded from model evidence |
+| `analytics_query_audit` | Hash-only question and query-catalog execution audit | Stores no raw user question or spreadsheet row |
 | `analysis_sessions` | Calculated analytics and chat history | Loaded by session ID plus owner |
 | `connections` | Provider connection metadata and encrypted tokens | Each provider/account is an independent record |
 | `owner_aliases` | Maps temporary and authenticated workspace identities | Preserves ownership after login |
@@ -526,13 +528,13 @@ The report exporter creates a PDF from verified analysis. When password protecti
 
 ### Current database
 
-The local and Render implementation uses SQLite with a persistent server data directory.
+Render provisions PostgreSQL and injects `DATABASE_URL`. Local development uses an isolated SQLite fallback with the same schema and static query contract when PostgreSQL is not configured. Existing account/session stores remain compatible with the persistent server data directory.
 
 ### Production scale target
 
 | Current | Production evolution |
 |---|---|
-| SQLite metadata and file BLOBs | PostgreSQL metadata plus encrypted object storage |
+| PostgreSQL analytical rows plus local compatibility stores | Encrypted object storage for large original files |
 | In-process analysis | Queue-based worker jobs |
 | One application instance | Horizontally scalable API and workers |
 | Local key fallback | Cloud KMS and managed secrets |
@@ -735,7 +737,6 @@ flowchart TB
 
 ### Phase 2: Multi-user production
 
-- move metadata to PostgreSQL
 - move uploaded bytes to encrypted object storage
 - add job queue and worker service
 - add structured audit events
@@ -745,7 +746,7 @@ flowchart TB
 ### Phase 3: Enterprise analytics
 
 - add read-only warehouse connectors
-- add validated typed query plans and SQL compilation
+- extend the validated static query catalog with approved typed plans
 - add semantic metric registry
 - add reconciliation rules and approval workflows
 - add observability for data lineage, model context, cost, and latency

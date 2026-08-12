@@ -24,6 +24,7 @@ import {
 import { getAiWorkspaceOnboarding, saveAiWorkspaceOnboarding } from '../api/universalBackend';
 import { useWorkspaceUser, workspaceInitials } from '../utils/workspaceUser';
 import './PublicPages.css';
+import './OnboardingOverrides.css';
 
 const STEPS = [
   ['Company Information', 'Completed'],
@@ -127,6 +128,20 @@ export default function OnboardingAiWorkspace() {
       window.setTimeout(() => navigate('/onboarding/complete'), 450);
     } catch (error) {
       setNotice({ type: 'error', text: error.message || 'AI workspace preferences save nahi ho payi.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const skipForNow = async () => {
+    if (saving) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      await saveAiWorkspaceOnboarding({ skipped: true });
+      navigate('/onboarding/complete');
+    } catch (error) {
+      setNotice({ type: 'error', text: error.message || 'Step skip nahi ho paya.' });
     } finally {
       setSaving(false);
     }
@@ -249,6 +264,7 @@ export default function OnboardingAiWorkspace() {
 
           <div className="onboarding-actions ai-actions">
             <button type="button" className="onboarding-back" onClick={() => navigate('/onboarding/data-source')}><ArrowLeft size={16} /> Back</button>
+            <button type="button" className="onboarding-skip" onClick={skipForNow} disabled={saving}>Skip for now</button>
             <button className="signup-primary onboarding-continue" type="submit" disabled={saving}>
               {saving ? 'Saving...' : 'Continue'} <ArrowRight size={17} />
             </button>

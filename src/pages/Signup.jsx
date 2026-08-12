@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { oauthStartUrl, signUpAccount } from '../api/universalBackend';
 import './PublicPages.css';
+import './SignupOverrides.css';
 
 const COUNTRY_CODES = [
   { code: '+91', label: '🇮🇳 +91' },

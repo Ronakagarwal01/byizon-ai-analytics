@@ -64,10 +64,6 @@ function ProtectedRoute({ children }) {
   if (!onboarding.completed && !isOnboardingRoute) {
     return <Navigate to={onboarding.nextStep || '/onboarding/company'} replace />;
   }
-  if (onboarding.completed && isOnboardingRoute) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
   return (
     <>
       {!isOnboardingRoute && <AppVoiceAssistant />}

@@ -1,18 +1,28 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import hashlib
+import logging
 import mimetypes
 import os
 import re
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from .analytics.service import ANALYSIS_VERSION, analyze_file, chat_answer
+from .analytics.service import (
+    ANALYSIS_VERSION,
+    analyze_file,
+    analyze_parsed_file,
+    build_analysis_result,
+    chat_answer,
+    prepare_analysis,
+)
 from .analytics.analytics_dataset import (
     build_power_bi_manifest,
     create_or_update_analytics_dataset,
@@ -20,7 +30,13 @@ from .analytics.analytics_dataset import (
     get_power_bi_semantic_view,
 )
 from .analytics.evidence_builder import build_evidence
-from .analytics.universal_pipeline import run_universal_pipeline
+from .analytics.sql_warehouse import warehouse_configuration
+from .analytics.universal_pipeline import (
+    attach_universal_metadata,
+    finalize_universal_pipeline,
+    prepare_universal_pipeline,
+    run_universal_pipeline,
+)
 from .analytics.session_manager import (
     append_chat,
     clear_chat,
@@ -29,6 +45,8 @@ from .analytics.session_manager import (
     get_session,
     progress,
     reassign_owner as reassign_session_owner,
+    update_analysis,
+    update_progress,
 )
 from .connectors import (
     connected_source_metadata,
@@ -102,10 +120,30 @@ from .account_store import (
 )
 
 
+LOGGER = logging.getLogger(__name__)
+
+
+def _bounded_env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid %s value; using %s", name, default)
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+_BACKGROUND_WORKERS = _bounded_env_int("BYIZON_BACKGROUND_WORKERS", 2, 1, 4)
+_ANALYSIS_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_BACKGROUND_WORKERS,
+    thread_name_prefix="byizon-analysis",
+)
+_DEFAULT_ANALYZE_FILE = analyze_file
+
+
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 AUTH_DISABLED = os.getenv(
     "BYIZON_AUTH_DISABLED",
-    "true" if os.getenv("BYIZON_ENV", "development").strip().lower() != "production" else "false",
+    "false",
 ).strip().lower() in {"1", "true", "yes", "on"}
 LOCAL_FRONTEND_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
 REQUEST_ORIGIN: ContextVar[str] = ContextVar("request_origin", default="")
@@ -402,6 +440,11 @@ def _store_then_analyze(
     metadata: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Commit the source first, then analyze through the universal ETL pipeline."""
+    def pipeline_analyzer(name: str, parsed: dict[str, Any]) -> dict[str, Any]:
+        if analyze_file is not _DEFAULT_ANALYZE_FILE:
+            return analyze_file(name, content)
+        return analyze_parsed_file(name, parsed)
+
     result, dataset = run_universal_pipeline(
         file_name,
         content,
@@ -409,8 +452,20 @@ def _store_then_analyze(
         source_kind,
         content_type=content_type,
         metadata=metadata,
-        analyzer=analyze_file,
+        analyzer=pipeline_analyzer,
     )
+    _persist_analysis_contract(result, dataset, content, owner_user_id, source_kind, file_name)
+    return result, dataset
+
+
+def _persist_analysis_contract(
+    result: dict[str, Any],
+    dataset: dict[str, Any],
+    content: bytes,
+    owner_user_id: str,
+    source_kind: str,
+    file_name: str,
+) -> None:
     _attach_source_provenance(result, content, source_kind, file_name)
     result["sourceProvenance"]["databaseRecordId"] = dataset["datasetId"]
     result["sourceProvenance"]["databaseSha256"] = dataset["sha256"]
@@ -421,7 +476,104 @@ def _store_then_analyze(
     )
     result["analyticsDatasetId"] = analytics_record["analyticsDatasetId"]
     result["analyticsDataset"] = analytics_record["payload"]
-    return result, dataset
+
+
+def _complete_background_analysis(
+    session_id: str,
+    prepared_pipeline: dict[str, Any],
+    prepared_analysis: dict[str, Any],
+) -> None:
+    owner_user_id = prepared_pipeline["ownerUserId"]
+
+    def report(progress_value: int, stage: str, message: str) -> None:
+        update_progress(
+            session_id,
+            owner_user_id,
+            progress_value,
+            stage,
+            message,
+        )
+
+    try:
+        deep_result = build_analysis_result(
+            prepared_analysis,
+            include_data_science=True,
+            on_progress=report,
+        )
+        finalize_universal_pipeline(deep_result, prepared_pipeline)
+        _persist_analysis_contract(
+            deep_result,
+            prepared_pipeline["dataset"],
+            prepared_pipeline["content"],
+            owner_user_id,
+            prepared_pipeline["sourceKind"],
+            prepared_pipeline["fileName"],
+        )
+        update_analysis(
+            session_id,
+            deep_result,
+            owner_user_id,
+            analysis_status="complete",
+        )
+    except Exception as exc:
+        LOGGER.exception("Background analysis failed for session %s", session_id)
+        update_progress(
+            session_id,
+            owner_user_id,
+            100,
+            "quick_dashboard_ready",
+            "Quick dashboard is available, but advanced analysis could not finish.",
+            analysis_status="failed",
+            error=str(exc),
+        )
+
+
+def _start_fast_upload_analysis(
+    file_name: str,
+    content: bytes,
+    owner_user_id: str,
+    *,
+    content_type: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    prepared_pipeline = prepare_universal_pipeline(
+        file_name,
+        content,
+        owner_user_id,
+        "manual_upload",
+        content_type=content_type,
+        metadata=None,
+    )
+    prepared_analysis = prepare_analysis(prepared_pipeline["parsed"])
+    quick_result = build_analysis_result(prepared_analysis, include_data_science=False)
+    attach_universal_metadata(
+        quick_result,
+        prepared_pipeline,
+        analysis_status="processing",
+        progress_value=70,
+        progress_stage="quick_dashboard_ready",
+        progress_message="Dashboard is ready. Advanced analysis is running in the background.",
+    )
+    _persist_analysis_contract(
+        quick_result,
+        prepared_pipeline["dataset"],
+        content,
+        owner_user_id,
+        "manual_upload",
+        file_name,
+    )
+    session = create_session(
+        quick_result,
+        owner_user_id=owner_user_id,
+        dataset_id=prepared_pipeline["dataset"]["datasetId"],
+        analysis_status="processing",
+    )
+    _ANALYSIS_EXECUTOR.submit(
+        _complete_background_analysis,
+        session["sessionId"],
+        prepared_pipeline,
+        prepared_analysis,
+    )
+    return session, prepared_pipeline["dataset"]
 
 
 async def app(scope, receive, send):
@@ -475,6 +627,7 @@ async def app(scope, receive, send):
                 "ok": True,
                 "engine": "Universal File Analytics Engine",
                 "version": ANALYSIS_VERSION,
+                "analyticsWarehouse": warehouse_configuration(),
             })
             return
 
@@ -529,17 +682,19 @@ async def app(scope, receive, send):
             except ValueError as error:
                 await _send_json(send, 400, {"ok": False, "error": str(error)})
                 return
+            secure_cookie = scope.get("scheme") == "https" or headers.get("x-forwarded-proto") == "https"
             await _send_json(
                 send,
                 201,
                 {
                     "ok": True,
-                    "requiresOtp": True,
+                    "requiresOtp": False,
                     "email": user["email"],
-                    "message": "Verify your email with OTP to continue.",
-                    "pendingVerification": bool(user.get("pendingVerification")),
-                    "otpDelivery": user.get("otpDelivery"),
+                    "user": user,
+                    "workspaceUserId": user["workspaceUserId"],
+                    "nextStep": user.get("onboarding", {}).get("nextStep", "/onboarding/company"),
                 },
+                [(b"set-cookie", session_cookie(workspace_cookie_value(user["workspaceUserId"]), secure_cookie).encode("utf-8"))],
             )
             return
 
@@ -1088,23 +1243,19 @@ async def app(scope, receive, send):
             if not upload:
                 raise ValueError("No file field found in upload.")
             safe_name = _sanitize_filename(upload["filename"])
-            result, dataset = _store_then_analyze(
+            session, dataset = await asyncio.to_thread(
+                _start_fast_upload_analysis,
                 safe_name,
                 upload["content"],
                 workspace_user_id,
-                "manual_upload",
                 content_type=upload.get("content_type") or "application/octet-stream",
-            )
-            session = create_session(
-                result,
-                owner_user_id=workspace_user_id,
-                dataset_id=dataset["datasetId"],
             )
             await _send_json(send, 200, {
                 "ok": True,
                 "sessionId": session["sessionId"],
                 "datasetId": dataset["datasetId"],
                 "storagePolicy": "database-first",
+                "analysisStatus": session["analysisStatus"],
                 "analysis": session["analysis"],
             })
             return

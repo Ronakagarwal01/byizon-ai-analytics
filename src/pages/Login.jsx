@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -68,8 +68,23 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [footerHidden, setFooterHidden] = useState(false);
   const emailValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
   const canSubmit = emailValid && password.length > 0;
+
+  useEffect(() => {
+    const handleWheel = event => {
+      if (event.deltaY > 8) setFooterHidden(true);
+      if (event.deltaY < -8) setFooterHidden(false);
+    };
+    const handleScroll = () => setFooterHidden(window.scrollY > 24);
+    window.addEventListener('wheel', handleWheel, { passive: true });
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
 
   const finishLogin = (payload) => {
     localStorage.removeItem('byizon_pending_email');
@@ -162,7 +177,7 @@ export default function Login() {
         </form>
       </section>
 
-      <footer className="login-footer-strip" aria-label="Byizon product pillars">
+      <footer className={`login-footer-strip${footerHidden ? ' is-hidden' : ''}`} aria-label="Byizon product pillars">
         <div><BarChart3 size={18} /><strong>Smart Dashboards</strong><span>Real-time insights & analytics</span></div>
         <div><Bot size={18} /><strong>AI Assistants</strong><span>Automate & scale your work</span></div>
         <div><Building2 size={18} /><strong>Unified Platforms</strong><span>All your tools, one place</span></div>

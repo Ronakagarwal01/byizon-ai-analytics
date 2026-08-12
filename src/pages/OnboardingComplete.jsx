@@ -18,6 +18,7 @@ import {
   Zap,
 } from 'lucide-react';
 import './PublicPages.css';
+import './OnboardingOverrides.css';
 import { useWorkspaceUser, workspaceInitials } from '../utils/workspaceUser';
 import { completeOnboarding } from '../api/universalBackend';
 
@@ -190,6 +191,9 @@ export default function OnboardingComplete() {
             <div className="complete-actions">
               <button className="complete-back" type="button" onClick={() => navigate('/onboarding/ai-workspace')}>
                 <ArrowLeft size={16} /> Back
+              </button>
+              <button className="onboarding-skip" type="button" onClick={() => activateAccount('/dashboard')} disabled={activating}>
+                Skip for now
               </button>
               <button className="signup-primary complete-dashboard" type="button" onClick={() => activateAccount('/dashboard')} disabled={activating}>
                 {activating ? 'Activating account...' : 'Create Account & Open Dashboard'} <ArrowRight size={17} />

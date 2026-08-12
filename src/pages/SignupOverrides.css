@@ -1,0 +1,246 @@
+/* Loaded after PublicPages.css so signup remains visually consistent with login. */
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) {
+  width: 100% !important;
+  min-height: 100vh !important;
+  height: auto !important;
+  display: grid !important;
+  grid-template-columns: minmax(430px, 44%) minmax(600px, 56%) !important;
+  overflow-x: hidden !important;
+  overflow-y: visible !important;
+  background:
+    linear-gradient(90deg, rgba(18, 11, 9, .91) 0%, rgba(43, 24, 17, .72) 45%, rgba(43, 24, 17, .12) 78%),
+    #3b2115 url('/assets/byizon-auth-background-clean.png') center 54% / cover no-repeat fixed !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel {
+  grid-column: 1 !important;
+  width: 100% !important;
+  min-height: 100vh !important;
+  height: auto !important;
+  padding: clamp(42px, 5vh, 68px) clamp(40px, 5vw, 88px) 42px !important;
+  overflow: visible !important;
+  background: transparent !important;
+  filter: none !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel::after,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-overlay {
+  display: none !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-content {
+  width: min(100%, 390px) !important;
+  max-width: 390px !important;
+  min-height: calc(100vh - 84px) !important;
+  height: auto !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-logo {
+  color: #fff !important;
+  font-size: 36px !important;
+  line-height: 1 !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-logo span {
+  color: #e7b898 !important;
+  font-size: 11px !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy {
+  max-width: 370px !important;
+  margin-top: clamp(42px, 6vh, 72px) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy h1 {
+  color: #fff !important;
+  font-size: clamp(40px, 3.4vw, 56px) !important;
+  line-height: 1.06 !important;
+  letter-spacing: 0 !important;
+  text-shadow: 0 2px 18px rgba(18, 11, 9, .28) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy h1 em {
+  color: #d76c35 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy p {
+  max-width: 350px !important;
+  color: rgba(255, 255, 255, .84) !important;
+  font-size: 15px !important;
+  line-height: 1.65 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list {
+  width: 350px !important;
+  gap: 12px !important;
+  margin-top: 30px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list article:last-child {
+  display: none !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list strong {
+  color: #fff !important;
+  font-size: 14px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list span {
+  color: rgba(255, 255, 255, .72) !important;
+  font-size: 12px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-security-card {
+  width: 330px !important;
+  margin: auto 0 18px !important;
+  padding: 15px 17px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-security-card strong {
+  font-size: 13px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-security-card span,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copyright {
+  font-size: 11px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-form-panel {
+  grid-column: 2 !important;
+  width: 100% !important;
+  min-height: 100vh !important;
+  height: auto !important;
+  display: flex !important;
+  align-items: stretch !important;
+  justify-content: center !important;
+  padding: 16px clamp(24px, 4vw, 64px) !important;
+  overflow: visible !important;
+  background: transparent !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card {
+  width: min(100%, 680px) !important;
+  max-width: 680px !important;
+  min-height: calc(100vh - 32px) !important;
+  height: max-content !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: clamp(36px, 5vh, 56px) clamp(42px, 4vw, 64px) 42px !important;
+  overflow: visible !important;
+  scrollbar-width: none !important;
+  border: 1px solid rgba(255, 255, 255, .2) !important;
+  border-radius: 8px !important;
+  background: rgba(29, 19, 16, .78) !important;
+  color: #fff !important;
+  backdrop-filter: blur(8px) !important;
+  box-shadow: 0 28px 80px rgba(10, 6, 5, .34) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card::-webkit-scrollbar {
+  display: none !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-back-link,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title h2,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-field > span {
+  color: #fff !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title h2,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title p {
+  background: transparent !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-back-link,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-field > span {
+  font-size: 14px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title h2 {
+  font-size: 34px !important;
+  line-height: 1.12 !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title p {
+  color: rgba(255, 255, 255, .76) !important;
+  font-size: 15px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-input-wrap,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-phone-row select,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-social {
+  min-height: 54px !important;
+  background: rgba(255, 255, 255, .94) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-input-wrap input,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-phone-row select {
+  font-size: 15px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-strength,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-consent,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-login-copy {
+  color: rgba(255, 255, 255, .78) !important;
+  font-size: 13px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-primary {
+  min-height: 54px !important;
+  background: #b45b2d !important;
+  color: #fff !important;
+  font-size: 15px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider {
+  color: rgba(255, 255, 255, .7) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider::before,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider::after {
+  background: rgba(255, 255, 255, .2) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-consent a,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-login-copy a {
+  color: #ffc39f !important;
+}
+
+html:has(main.signup-page:not(.login-page):not(.verify-email-page)),
+body:has(main.signup-page:not(.login-page):not(.verify-email-page)) {
+  scrollbar-width: none;
+}
+
+html:has(main.signup-page:not(.login-page):not(.verify-email-page))::-webkit-scrollbar,
+body:has(main.signup-page:not(.login-page):not(.verify-email-page))::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 980px) {
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) {
+    grid-template-columns: 1fr !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel,
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-form-panel {
+    grid-column: 1 !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel {
+    min-height: 620px !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-form-panel {
+    min-height: auto !important;
+    padding: 18px !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card {
+    min-height: 0 !important;
+    padding: 32px 24px !important;
+  }
+}

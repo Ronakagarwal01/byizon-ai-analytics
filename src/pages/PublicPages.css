@@ -6,6 +6,529 @@
     "Segoe UI", sans-serif;
 }
 
+/* Login layout: full-canvas artwork with a large, readable form. */
+html body #root main.login-page {
+  grid-template-columns: minmax(430px, 46%) minmax(560px, 54%) !important;
+  background:
+    linear-gradient(90deg, rgba(38, 18, 10, .12) 0%, rgba(255, 246, 239, .06) 46%, rgba(255, 248, 243, .28) 100%),
+    url('/assets/byizon-auth-background-clean.png') center / cover no-repeat !important;
+}
+
+html body #root main.login-page .login-brand-panel {
+  padding: clamp(40px, 5vh, 68px) clamp(38px, 5vw, 88px) 124px !important;
+  background: transparent !important;
+  filter: none !important;
+}
+
+html body #root main.login-page .login-brand-panel::after {
+  background: linear-gradient(90deg, rgba(255, 247, 240, .76), rgba(255, 244, 235, .48) 68%, transparent) !important;
+}
+
+html body #root main.login-page .signup-brand-content {
+  width: min(100%, 390px) !important;
+  max-width: 390px !important;
+}
+
+html body #root main.login-page .signup-logo {
+  font-size: 34px !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.login-page .login-brand-copy {
+  max-width: 360px !important;
+  margin-top: clamp(42px, 6vh, 72px) !important;
+}
+
+html body #root main.login-page .login-brand-copy h1 {
+  max-width: 340px !important;
+  font-size: clamp(38px, 3.2vw, 54px) !important;
+  line-height: 1.04 !important;
+  letter-spacing: 0 !important;
+  color: #301c14 !important;
+  text-shadow: 0 2px 18px rgba(255, 249, 244, .9) !important;
+}
+
+html body #root main.login-page .login-brand-copy p {
+  max-width: 340px !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+  color: #43271d !important;
+}
+
+html body #root main.login-page .signup-feature-list {
+  width: 340px !important;
+  gap: 12px !important;
+  margin-top: 34px !important;
+}
+
+html body #root main.login-page .signup-feature-list strong {
+  font-size: 13px !important;
+}
+
+html body #root main.login-page .signup-feature-list span {
+  font-size: 11px !important;
+}
+
+html body #root main.login-page .signup-feature-list article:last-child {
+  display: none !important;
+}
+
+html body #root main.login-page .signup-security-card {
+  width: 320px !important;
+  padding: 14px 16px !important;
+}
+
+html body #root main.login-page .signup-security-card strong {
+  font-size: 12px !important;
+}
+
+html body #root main.login-page .signup-security-card span {
+  font-size: 10px !important;
+}
+
+html body #root main.login-page .signup-form-panel {
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 34px clamp(34px, 5vw, 88px) 112px !important;
+  background: linear-gradient(90deg, rgba(255, 249, 245, .14), rgba(255, 249, 245, .46)) !important;
+}
+
+html body #root main.login-page .login-card {
+  width: min(100%, 560px) !important;
+  max-width: 560px !important;
+  min-height: min(720px, calc(100vh - 145px)) !important;
+  max-height: calc(100vh - 128px) !important;
+  padding: clamp(48px, 7vh, 84px) clamp(42px, 4vw, 64px) 44px !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, .78) !important;
+  backdrop-filter: blur(6px) !important;
+  box-shadow: 0 28px 80px rgba(57, 28, 15, .22) !important;
+}
+
+html body #root main.login-page .login-card-title h2 {
+  font-size: 32px !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.login-page .login-card-title p,
+html body #root main.login-page .signup-field {
+  font-size: 14px !important;
+}
+
+html body #root main.login-page .login-card-title p {
+  margin: 10px 0 34px !important;
+}
+
+html body #root main.login-page .signup-input-wrap {
+  height: 54px !important;
+  border-radius: 7px !important;
+}
+
+html body #root main.login-page .signup-input-wrap input {
+  width: 100% !important;
+  font-size: 15px !important;
+}
+
+html body #root main.login-page .signup-primary,
+html body #root main.login-page .signup-social {
+  height: 54px !important;
+  font-size: 15px !important;
+}
+
+html body #root main.login-page .signup-login-copy {
+  font-size: 14px !important;
+}
+
+@media (max-width: 980px) {
+  html body #root main.login-page {
+    height: auto !important;
+    min-height: 100vh !important;
+    grid-template-columns: 1fr !important;
+    overflow: auto !important;
+  }
+
+  html body #root main.login-page .login-brand-panel {
+    grid-column: 1 !important;
+    height: auto !important;
+    min-height: 560px !important;
+    padding-bottom: 48px !important;
+  }
+
+  html body #root main.login-page .signup-form-panel {
+    grid-column: 1 !important;
+    height: auto !important;
+    min-height: auto !important;
+    padding: 36px 20px 120px !important;
+  }
+
+  html body #root main.login-page .login-card {
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+}
+
+/* Signup must remain after every legacy auth rule. */
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) {
+  grid-template-columns: minmax(430px, 46%) minmax(560px, 54%) !important;
+  background:
+    linear-gradient(90deg, rgba(18, 11, 9, .91) 0%, rgba(43, 24, 17, .72) 45%, rgba(43, 24, 17, .12) 78%),
+    #3b2115 url('/assets/byizon-auth-background-clean.png') center 54% / cover no-repeat !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel {
+  padding: clamp(36px, 4vh, 56px) clamp(38px, 5vw, 88px) 30px !important;
+  background: transparent !important;
+  filter: none !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel::after {
+  background: transparent !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-content {
+  width: min(100%, 390px) !important;
+  max-width: 390px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-logo {
+  color: #fff !important;
+  font-size: 34px !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-logo span {
+  color: #e7b898 !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy {
+  max-width: 360px !important;
+  margin-top: clamp(34px, 5vh, 58px) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy h1 {
+  color: #fff !important;
+  font-size: clamp(36px, 3vw, 50px) !important;
+  line-height: 1.05 !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy p {
+  max-width: 340px !important;
+  color: rgba(255, 255, 255, .84) !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list {
+  width: 340px !important;
+  gap: 10px !important;
+  margin-top: 24px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list article:last-child {
+  display: none !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list strong {
+  color: #fff !important;
+  font-size: 13px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list span {
+  color: rgba(255, 255, 255, .72) !important;
+  font-size: 11px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-security-card {
+  width: 320px !important;
+  margin: auto 0 14px !important;
+  padding: 14px 16px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copyright {
+  color: rgba(255, 255, 255, .7) !important;
+  font-size: 10px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-form-panel {
+  padding: 22px clamp(34px, 5vw, 88px) !important;
+  background: transparent !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card {
+  width: min(100%, 560px) !important;
+  max-width: 560px !important;
+  max-height: calc(100vh - 44px) !important;
+  padding: 30px clamp(36px, 4vw, 54px) 28px !important;
+  border-radius: 8px !important;
+  border-color: rgba(255, 255, 255, .2) !important;
+  background: rgba(29, 19, 16, .78) !important;
+  color: #fff !important;
+  backdrop-filter: blur(8px) !important;
+  box-shadow: 0 28px 80px rgba(10, 6, 5, .34) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-back-link,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title h2,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-field > span {
+  color: #fff !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title h2 {
+  font-size: 30px !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title p,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-strength,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-consent,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-login-copy {
+  color: rgba(255, 255, 255, .76) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-input-wrap,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-phone-row select,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-social {
+  min-height: 48px !important;
+  background: rgba(255, 255, 255, .94) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-primary {
+  min-height: 50px !important;
+  background: #b45b2d !important;
+  color: #fff !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider {
+  color: rgba(255, 255, 255, .7) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider::before,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider::after {
+  background: rgba(255, 255, 255, .2) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-consent a,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-login-copy a {
+  color: #ffc39f !important;
+}
+
+@media (max-width: 980px) {
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) {
+    height: auto !important;
+    min-height: 100vh !important;
+    grid-template-columns: 1fr !important;
+    overflow: auto !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel {
+    grid-column: 1 !important;
+    height: auto !important;
+    min-height: 580px !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-form-panel {
+    grid-column: 1 !important;
+    height: auto !important;
+    min-height: auto !important;
+    padding: 28px 18px !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card {
+    max-height: none !important;
+  }
+}
+
+/* Final signup canvas: mirror the landing/login cinematic palette. */
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) {
+  grid-template-columns: minmax(430px, 46%) minmax(560px, 54%) !important;
+  background:
+    linear-gradient(90deg, rgba(18, 11, 9, .91) 0%, rgba(43, 24, 17, .72) 45%, rgba(43, 24, 17, .12) 78%),
+    #3b2115 url('/assets/byizon-auth-background-clean.png') center 54% / cover no-repeat !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel {
+  padding: clamp(36px, 4vh, 56px) clamp(38px, 5vw, 88px) 30px !important;
+  background: transparent !important;
+  filter: none !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel::after {
+  background: transparent !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-content {
+  width: min(100%, 390px) !important;
+  max-width: 390px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-logo {
+  color: #fff !important;
+  font-size: 34px !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-logo span {
+  color: #e7b898 !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy {
+  max-width: 360px !important;
+  margin-top: clamp(34px, 5vh, 58px) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy h1 {
+  max-width: 360px !important;
+  color: #fff !important;
+  font-size: clamp(36px, 3vw, 50px) !important;
+  line-height: 1.05 !important;
+  letter-spacing: 0 !important;
+  text-shadow: 0 2px 18px rgba(18, 11, 9, .28) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copy p {
+  max-width: 340px !important;
+  color: rgba(255, 255, 255, .84) !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list {
+  width: 340px !important;
+  gap: 10px !important;
+  margin-top: 24px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list article:last-child {
+  display: none !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list strong {
+  color: #fff !important;
+  font-size: 13px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-feature-list span {
+  color: rgba(255, 255, 255, .72) !important;
+  font-size: 11px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-security-card {
+  width: 320px !important;
+  margin: auto 0 14px !important;
+  padding: 14px 16px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-security-card strong {
+  font-size: 12px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-security-card span {
+  font-size: 10px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-copyright {
+  color: rgba(255, 255, 255, .7) !important;
+  font-size: 10px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-form-panel {
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 22px clamp(34px, 5vw, 88px) !important;
+  background: transparent !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card {
+  width: min(100%, 560px) !important;
+  max-width: 560px !important;
+  max-height: calc(100vh - 44px) !important;
+  padding: 30px clamp(36px, 4vw, 54px) 28px !important;
+  border-radius: 8px !important;
+  border-color: rgba(255, 255, 255, .2) !important;
+  background: rgba(29, 19, 16, .78) !important;
+  color: #fff !important;
+  backdrop-filter: blur(8px) !important;
+  box-shadow: 0 28px 80px rgba(10, 6, 5, .34) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-back-link,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title h2,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-field > span {
+  color: #fff !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title h2 {
+  font-size: 30px !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card-title p,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-strength,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-consent,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-login-copy {
+  color: rgba(255, 255, 255, .76) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-input-wrap,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-phone-row select,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-social {
+  background: rgba(255, 255, 255, .94) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-input-wrap,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-phone-row select {
+  min-height: 48px !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-primary {
+  min-height: 50px !important;
+  background: #b45b2d !important;
+  color: #fff !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider {
+  color: rgba(255, 255, 255, .7) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider::before,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-divider::after {
+  background: rgba(255, 255, 255, .2) !important;
+}
+
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-consent a,
+html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-login-copy a {
+  color: #ffc39f !important;
+}
+
+@media (max-width: 980px) {
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) {
+    height: auto !important;
+    min-height: 100vh !important;
+    grid-template-columns: 1fr !important;
+    overflow: auto !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-brand-panel {
+    grid-column: 1 !important;
+    height: auto !important;
+    min-height: 580px !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-form-panel {
+    grid-column: 1 !important;
+    height: auto !important;
+    min-height: auto !important;
+    padding: 28px 18px !important;
+  }
+
+  html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signup-card {
+    max-height: none !important;
+  }
+}
+
 .public-site *,
 .public-site *::before,
 .public-site *::after {
@@ -8118,5 +8641,245 @@ html body #root main.signup-page:not(.login-page):not(.verify-email-page) .signu
   .byizon-landing-footer {
     grid-template-columns: 1fr;
     padding-bottom: 100px;
+  }
+}
+
+/* Final login canvas: keep this last so legacy auth rules cannot shrink it. */
+html body #root main.login-page {
+  grid-template-columns: minmax(430px, 46%) minmax(560px, 54%) !important;
+  background:
+    linear-gradient(90deg, rgba(18, 11, 9, .91) 0%, rgba(43, 24, 17, .72) 45%, rgba(43, 24, 17, .12) 78%),
+    #3b2115 url('/assets/byizon-auth-background-clean.png') center 54% / cover no-repeat !important;
+}
+
+html body #root main.login-page .login-brand-panel {
+  padding: clamp(40px, 5vh, 68px) clamp(38px, 5vw, 88px) 124px !important;
+  background: transparent !important;
+  filter: none !important;
+}
+
+html body #root main.login-page .login-brand-panel::after {
+  background: transparent !important;
+}
+
+html body #root main.login-page .signup-brand-content {
+  width: min(100%, 390px) !important;
+  max-width: 390px !important;
+}
+
+html body #root main.login-page .signup-logo {
+  font-size: 34px !important;
+  letter-spacing: 0 !important;
+  color: #fff !important;
+}
+
+html body #root main.login-page .signup-logo span {
+  color: #e7b898 !important;
+}
+
+html body #root main.login-page .login-brand-copy {
+  max-width: 360px !important;
+  margin-top: clamp(42px, 6vh, 72px) !important;
+}
+
+html body #root main.login-page .login-brand-copy h1 {
+  max-width: 340px !important;
+  font-size: clamp(38px, 3.2vw, 54px) !important;
+  line-height: 1.04 !important;
+  letter-spacing: 0 !important;
+  color: #fff !important;
+  text-shadow: 0 2px 18px rgba(18, 11, 9, .28) !important;
+}
+
+html body #root main.login-page .login-brand-copy p {
+  max-width: 340px !important;
+  font-size: 14px !important;
+  line-height: 1.6 !important;
+  color: rgba(255, 255, 255, .84) !important;
+}
+
+html body #root main.login-page .signup-feature-list strong {
+  color: #fff !important;
+}
+
+html body #root main.login-page .signup-feature-list span {
+  color: rgba(255, 255, 255, .72) !important;
+}
+
+html body #root main.login-page .signup-feature-list {
+  width: 340px !important;
+  gap: 12px !important;
+  margin-top: 34px !important;
+}
+
+html body #root main.login-page .signup-feature-list strong {
+  font-size: 13px !important;
+}
+
+html body #root main.login-page .signup-feature-list span {
+  font-size: 11px !important;
+}
+
+html body #root main.login-page .signup-security-card {
+  width: 320px !important;
+  padding: 14px 16px !important;
+}
+
+html body #root main.login-page .signup-security-card strong {
+  font-size: 12px !important;
+}
+
+html body #root main.login-page .signup-security-card span {
+  font-size: 10px !important;
+}
+
+html body #root main.login-page .signup-form-panel {
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 34px clamp(34px, 5vw, 88px) 112px !important;
+  background: transparent !important;
+}
+
+html body #root main.login-page .login-card {
+  width: min(100%, 560px) !important;
+  max-width: 560px !important;
+  min-height: min(720px, calc(100vh - 145px)) !important;
+  max-height: calc(100vh - 128px) !important;
+  padding: clamp(48px, 7vh, 84px) clamp(42px, 4vw, 64px) 44px !important;
+  border-radius: 8px !important;
+  border-color: rgba(255, 255, 255, .2) !important;
+  background: rgba(29, 19, 16, .74) !important;
+  backdrop-filter: blur(8px) !important;
+  box-shadow: 0 28px 80px rgba(10, 6, 5, .34) !important;
+}
+
+html body #root main.login-page .login-card-title,
+html body #root main.login-page .login-card-title h2,
+html body #root main.login-page .login-card-title p {
+  background: transparent !important;
+}
+
+html body #root main.login-page .login-card-title h2 {
+  color: #fff !important;
+  text-shadow: none !important;
+}
+
+html body #root main.login-page .login-card-title p,
+html body #root main.login-page .signup-field > span,
+html body #root main.login-page .signup-login-copy {
+  color: rgba(255, 255, 255, .82) !important;
+  font-weight: 750 !important;
+  text-shadow: none !important;
+}
+
+html body #root main.login-page .signup-login-copy a {
+  color: #ffc39f !important;
+}
+
+html body #root main.login-page .signup-divider {
+  color: rgba(255, 255, 255, .72) !important;
+}
+
+html body #root main.login-page .signup-divider::before,
+html body #root main.login-page .signup-divider::after {
+  background: rgba(255, 255, 255, .2) !important;
+}
+
+html body #root main.login-page .signup-security-card {
+  position: absolute !important;
+  left: 0 !important;
+  bottom: 16px !important;
+  margin: 0 !important;
+}
+
+html body #root main.login-page .signup-input-wrap,
+html body #root main.login-page .signup-social {
+  background-color: rgba(255, 255, 255, .9) !important;
+}
+
+html body #root main.login-page .signup-primary {
+  background: #b45b2d !important;
+  color: #fff !important;
+}
+
+html body #root main.login-page .login-footer-strip {
+  border-top: 1px solid rgba(255, 255, 255, .18) !important;
+  background: rgba(23, 16, 14, .82) !important;
+  color: #fff !important;
+  backdrop-filter: blur(14px) !important;
+  transition: transform .28s ease, opacity .22s ease !important;
+  will-change: transform, opacity;
+}
+
+html body #root main.login-page .login-footer-strip strong {
+  color: #fff !important;
+}
+
+html body #root main.login-page .login-footer-strip span {
+  color: rgba(255, 255, 255, .68) !important;
+}
+
+html body #root main.login-page .login-footer-strip.is-hidden {
+  transform: translateY(105%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html body #root main.login-page .signup-security-card {
+  bottom: -35px !important;
+}
+
+html body #root main.login-page .login-card-title h2 {
+  font-size: 32px !important;
+  letter-spacing: 0 !important;
+}
+
+html body #root main.login-page .login-card-title p,
+html body #root main.login-page .signup-field,
+html body #root main.login-page .signup-login-copy {
+  font-size: 14px !important;
+}
+
+html body #root main.login-page .login-card-title p {
+  margin: 10px 0 34px !important;
+}
+
+html body #root main.login-page .signup-input-wrap,
+html body #root main.login-page .signup-primary,
+html body #root main.login-page .signup-social {
+  height: 54px !important;
+  font-size: 15px !important;
+}
+
+html body #root main.login-page .signup-input-wrap input {
+  width: 100% !important;
+  font-size: 15px !important;
+}
+
+@media (max-width: 980px) {
+  html body #root main.login-page {
+    height: auto !important;
+    min-height: 100vh !important;
+    grid-template-columns: 1fr !important;
+    overflow: auto !important;
+  }
+
+  html body #root main.login-page .login-brand-panel {
+    grid-column: 1 !important;
+    height: auto !important;
+    min-height: 560px !important;
+    padding-bottom: 48px !important;
+  }
+
+  html body #root main.login-page .signup-form-panel {
+    grid-column: 1 !important;
+    height: auto !important;
+    min-height: auto !important;
+    padding: 36px 20px 120px !important;
+  }
+
+  html body #root main.login-page .login-card {
+    min-height: 0 !important;
+    max-height: none !important;
   }
 }

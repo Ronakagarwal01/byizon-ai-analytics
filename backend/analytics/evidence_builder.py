@@ -4,6 +4,7 @@ from typing import Any
 
 from .query_planner import build_query_context
 from .runtime_query import execute_runtime_query_pipeline
+from .sql_warehouse import query_dataset_evidence
 from .warehouse import list_metrics, record_evidence
 
 
@@ -55,9 +56,24 @@ def build_evidence(
     runtime = execute_runtime_query_pipeline(question, analysis, owner_user_id, session_id=session_id)
     metrics = list_metrics(dataset_id, owner_user_id) if dataset_id else []
     runtime_evidence = runtime.get("processedEvidence", {}).get("structuredJson", {})
+    sql_evidence = (
+        query_dataset_evidence(dataset_id, owner_user_id, question)
+        if dataset_id
+        else {"available": False, "reason": "No persisted dataset is attached to this analysis."}
+    )
+    if sql_evidence.get("available"):
+        runtime_evidence = {
+            **runtime_evidence,
+            "kpis": sql_evidence.get("kpis") or runtime_evidence.get("kpis"),
+            "aggregations": sql_evidence.get("aggregations") or runtime_evidence.get("aggregations"),
+            "topValues": sql_evidence.get("topValues"),
+            "timeCoverage": sql_evidence.get("timeCoverage"),
+            "dataQuality": sql_evidence.get("dataQuality") or runtime_evidence.get("dataQuality"),
+            "sqlPolicy": sql_evidence.get("policy"),
+        }
     evidence_validation = runtime.get("evidenceValidation", {})
     evidence = {
-        "policy": "runtime-query-execution-pipeline",
+        "policy": "database-first-sql-evidence-pipeline",
         "question": question,
         "dataset": context.get("dataset", {}),
         "runtimeQueryRunId": runtime.get("runtimeQueryRunId"),
@@ -68,6 +84,7 @@ def build_evidence(
             **(runtime.get("queryPlan", {}) or {}),
         },
         "sqlExecution": runtime.get("sqlExecution", {}),
+        "sqlWarehouseEvidence": sql_evidence,
         "evidence": context.get("evidence", {}),
         "runtimeEvidence": runtime_evidence,
         "postSqlProcessing": {
@@ -109,6 +126,12 @@ def build_evidence(
         "sqlExecution": runtime.get("sqlExecution", {}),
         "evidenceValidation": evidence_validation,
         "metricRegistryCount": len(metrics),
+        "sqlWarehouse": {
+            "available": sql_evidence.get("available", False),
+            "backend": sql_evidence.get("backend"),
+            "policy": sql_evidence.get("policy"),
+            "queryAudit": sql_evidence.get("queryAudit", {}),
+        },
         "modelBoundary": evidence["security"],
         "mandatoryFlow": runtime.get("mandatoryFlow", []),
     }

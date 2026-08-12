@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from .dataset_store import load_dataset_bytes, store_dataset
+from .file_parser import parse_file
 from .metric_registry import register_analysis_metrics
+from .sql_warehouse import finalize_dataset_metadata, ingest_parsed_dataset
 from .warehouse import add_layer, complete_pipeline_run, create_pipeline_run, update_pipeline_stage
 
 
@@ -12,6 +14,7 @@ ETL_STAGES = [
     "stored_source_verified",
     "workspace_ownership_bound",
     "raw_layer_persisted",
+    "sql_warehouse_ingested",
     "source_integrity_verified",
     "parser_selected",
     "clean_layer_profiled",
@@ -58,8 +61,31 @@ def run_universal_pipeline(
     *,
     content_type: str,
     metadata: dict[str, Any] | None,
-    analyzer: Callable[[str, bytes], dict[str, Any]],
+    analyzer: Callable[[str, dict[str, Any]], dict[str, Any]],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    prepared = prepare_universal_pipeline(
+        file_name,
+        content,
+        owner_user_id,
+        source_kind,
+        content_type=content_type,
+        metadata=metadata,
+    )
+    result = analyzer(file_name, prepared["parsed"])
+    finalize_universal_pipeline(result, prepared)
+    return result, prepared["dataset"]
+
+
+def prepare_universal_pipeline(
+    file_name: str,
+    content: bytes,
+    owner_user_id: str,
+    source_kind: str,
+    *,
+    content_type: str,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Commit, verify, parse once, and bulk-load the uploaded dataset."""
     dataset = store_dataset(
         file_name,
         content,
@@ -86,11 +112,63 @@ def run_universal_pipeline(
     if stored_content != content:
         raise ValueError("Stored source verification failed; analysis aborted.")
     update_pipeline_stage(run_id, owner_user_id, "stored_source_verified")
-    result = analyzer(file_name, stored_content)
+    parsed = parse_file(file_name, stored_content)
+    sql_warehouse = ingest_parsed_dataset(
+        dataset=dataset,
+        content=stored_content,
+        parsed=parsed,
+    )
+    add_layer(
+        run_id,
+        dataset["datasetId"],
+        owner_user_id,
+        "sql_warehouse",
+        f"analytics_sources:{dataset['datasetId']}",
+        {
+            "backend": sql_warehouse["backend"],
+            "fullRowsStored": sql_warehouse["fullRowsStored"],
+            "normalizedCellCount": sql_warehouse["normalizedCellCount"],
+            "queryCatalogVersion": sql_warehouse["queryCatalogVersion"],
+            "rawRowsSentToModel": False,
+        },
+    )
+    update_pipeline_stage(run_id, owner_user_id, "sql_warehouse_ingested")
+    return {
+        "fileName": file_name,
+        "content": stored_content,
+        "ownerUserId": owner_user_id,
+        "sourceKind": source_kind,
+        "dataset": dataset,
+        "runId": run_id,
+        "parsed": parsed,
+        "sqlWarehouse": sql_warehouse,
+    }
+
+
+def attach_universal_metadata(
+    result: dict[str, Any],
+    prepared: dict[str, Any],
+    *,
+    analysis_status: str,
+    progress_value: int,
+    progress_stage: str,
+    progress_message: str,
+) -> dict[str, Any]:
+    dataset = prepared["dataset"]
+    run_id = prepared["runId"]
+    owner_user_id = prepared["ownerUserId"]
+    sql_warehouse = prepared["sqlWarehouse"]
     result["datasetId"] = dataset["datasetId"]
     result["storagePolicy"] = "database-first"
     result["pipelineRunId"] = run_id
     result["pipelineTrace"] = list(ETL_STAGES)
+    result["analysisStatus"] = analysis_status
+    result["processing"] = {
+        "status": analysis_status,
+        "progress": max(0, min(int(progress_value), 100)),
+        "stage": progress_stage,
+        "message": progress_message,
+    }
     sensitive_columns = _classify_sensitive_columns(result)
     result["securityPolicy"] = {
         "workspaceIsolated": True,
@@ -98,6 +176,25 @@ def run_universal_pipeline(
         "llmInput": "query-scoped evidence JSON only",
         "sensitiveColumns": sensitive_columns,
     }
+    result["sqlWarehouse"] = sql_warehouse
+    return result
+
+
+def finalize_universal_pipeline(result: dict[str, Any], prepared: dict[str, Any]) -> dict[str, Any]:
+    dataset = prepared["dataset"]
+    run_id = prepared["runId"]
+    owner_user_id = prepared["ownerUserId"]
+    sql_warehouse = prepared["sqlWarehouse"]
+    attach_universal_metadata(
+        result,
+        prepared,
+        analysis_status="complete",
+        progress_value=100,
+        progress_stage="complete",
+        progress_message="Dashboard and advanced analysis are ready.",
+    )
+    sensitive_columns = result["securityPolicy"]["sensitiveColumns"]
+    finalize_dataset_metadata(dataset["datasetId"], owner_user_id, result)
     manifest = _safe_layers_manifest(result, sensitive_columns)
     for layer_name in ("clean", "analytics", "materialized", "power_bi", "evidence"):
         add_layer(
@@ -116,6 +213,7 @@ def run_universal_pipeline(
             "connector_or_upload",
             "source_validation",
             "raw_database_storage",
+            "postgresql_analytics_warehouse",
             "universal_etl",
             "analytics_layers",
             "metric_registry",
@@ -123,8 +221,14 @@ def run_universal_pipeline(
             "ai_orchestrator",
             "dashboard_charts_insights",
         ],
-        "layers": ["raw", "clean", "analytics", "materialized", "power_bi", "evidence"],
+        "layers": ["raw", "sql_warehouse", "clean", "analytics", "materialized", "power_bi", "evidence"],
         "metricCount": len(registered),
+        "sqlWarehouse": {
+            "backend": sql_warehouse["backend"],
+            "fullRowsStored": sql_warehouse["fullRowsStored"],
+            "prebuiltQueryCount": sql_warehouse["prebuiltQueryCount"],
+            "rawRowsSentToModel": False,
+        },
     }
     complete_pipeline_run(run_id, owner_user_id, {"stages": ETL_STAGES, **manifest})
-    return result, dataset
+    return result

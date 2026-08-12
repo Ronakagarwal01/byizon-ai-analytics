@@ -252,6 +252,16 @@ export async function analyzeFileWithBackend(file) {
   return { ...payload.analysis, sessionId: payload.sessionId || payload.analysis?.sessionId };
 }
 
+export async function getAnalysisProgress(sessionId) {
+  if (!sessionId) throw new Error('Session id is required to check analysis progress.');
+  const response = await apiFetch(`${apiBase()}/api/progress/${encodeURIComponent(sessionId)}`);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || `Analysis progress could not be loaded (${response.status}).`);
+  }
+  return payload;
+}
+
 export async function getAnalyticsDataset(id, options = {}) {
   if (!id) throw new Error('Analytics dataset id is required.');
   const params = new URLSearchParams();
