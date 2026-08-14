@@ -184,6 +184,8 @@ def build_analysis_result(
     prepared: dict[str, Any],
     *,
     include_data_science: bool = True,
+    include_report: bool = True,
+    row_limit: int = 5000,
     on_progress: Callable[[int, str, str], None] | None = None,
 ) -> dict[str, Any]:
     """Render a quick dashboard or enrich the same prepared analysis with ML outputs."""
@@ -214,17 +216,24 @@ def build_analysis_result(
     else:
         data_science_result = _pending_data_science_result()
 
-    report_result = generate_report(
-        parsed,
-        schema,
-        profile,
-        kpi_result,
-        chart_result,
-        insight_result,
-        anomaly_result,
-        root_cause_result,
-        data_science_result if include_data_science else None,
-    )
+    if include_report:
+        report_result = generate_report(
+            parsed,
+            schema,
+            profile,
+            kpi_result,
+            chart_result,
+            insight_result,
+            anomaly_result,
+            root_cause_result,
+            data_science_result if include_data_science else None,
+        )
+    else:
+        report_result = {
+            "summary": kpi_result.get("businessSummary") or "Dashboard summary is ready.",
+            "report": None,
+            "reportText": "Advanced report generation is running in the background.",
+        }
 
     result = {
         "analysisVersion": ANALYSIS_VERSION,
@@ -244,7 +253,7 @@ def build_analysis_result(
         "relationships": schema["relationships"],
         "schema": schema,
         "columns": list(primary_table.dataframe.columns),
-        "rows": _records(primary_table.dataframe),
+        "rows": _records(primary_table.dataframe, limit=row_limit),
         "rowCount": len(primary_table.dataframe),
         "colCount": len(primary_table.dataframe.columns),
         "columnRoles": schema["columnRoles"],
@@ -436,13 +445,15 @@ def _column_aggregates(df: pd.DataFrame, schema: dict[str, Any]) -> list[dict[st
     semantics = {column["name"]: column for column in primary_schema.get("columns", [])}
     rows: list[dict[str, Any]] = []
     for column in df.columns:
+        semantic = semantics.get(column, {})
+        if semantic.get("detectedType") != "numeric" and not pd.api.types.is_numeric_dtype(df[column]):
+            continue
         values = clean_numeric(df[column]).dropna()
         if values.empty:
             continue
         numeric_share = float(values.count()) / max(len(df), 1)
         if numeric_share < 0.6:
             continue
-        semantic = semantics.get(column, {})
         rows.append({
             "column": column,
             "count": int(values.count()),

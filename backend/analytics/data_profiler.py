@@ -10,9 +10,20 @@ import pandas as pd
 
 
 EMPTY_MARKERS = {"", "nan", "none", "null", "na", "n/a", "-", "--"}
+TYPE_INFERENCE_SAMPLE_SIZE = 600
+
+
+def inference_sample(series: pd.Series, limit: int = TYPE_INFERENCE_SAMPLE_SIZE) -> pd.Series:
+    """Return a deterministic spread sample for inexpensive type inference."""
+    if len(series) <= limit:
+        return series
+    indexes = np.linspace(0, len(series) - 1, num=limit, dtype=int)
+    return series.iloc[indexes]
 
 
 def clean_numeric(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce")
     text = series.astype(str).str.strip()
     text = text.str.replace(
         r"(?i)\b(rs|inr|usd|eur|gbp|hrs?|hours?|days?|mins?|minutes?|secs?|seconds?|units?)\b",
@@ -27,6 +38,8 @@ def clean_numeric(series: pd.Series) -> pd.Series:
 
 
 def clean_datetime(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_datetime(series, errors="coerce")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         return pd.to_datetime(series.replace("", pd.NA), errors="coerce", dayfirst=True)
@@ -40,16 +53,33 @@ def is_empty_value(value: Any) -> bool:
     return str(value).strip().lower() in EMPTY_MARKERS
 
 
-def detect_data_type(series: pd.Series) -> str:
-    non_empty = series[~series.map(is_empty_value)]
+def empty_mask(series: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_datetime64_any_dtype(series):
+        return series.isna()
+    normalized = series.astype("string").str.strip().str.lower()
+    return series.isna() | normalized.isin(EMPTY_MARKERS)
+
+
+def detect_data_type(series: pd.Series, column_name: str = "") -> str:
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return "date"
+    if pd.api.types.is_numeric_dtype(series):
+        return "numeric"
+    sample = inference_sample(series)
+    non_empty = sample[~empty_mask(sample)]
     if non_empty.empty:
         return "empty"
     numeric_ratio = clean_numeric(non_empty).notna().mean()
     if numeric_ratio >= 0.75:
         return "numeric"
-    date_ratio = clean_datetime(non_empty).notna().mean()
-    if date_ratio >= 0.65:
-        return "date"
+    normalized_name = str(column_name).lower()
+    date_hint = any(token in normalized_name for token in ("date", "time", "month", "year", "created", "updated"))
+    text = non_empty.astype(str).str.strip()
+    value_hint = bool(text.str.match(r"^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}(?:\s|$)", na=False).mean() >= 0.5)
+    if pd.api.types.is_datetime64_any_dtype(series) or date_hint or value_hint:
+        date_ratio = clean_datetime(non_empty).notna().mean()
+        if date_ratio >= 0.65:
+            return "date"
     lower = non_empty.astype(str).str.lower().str.strip()
     boolean_ratio = lower.isin(["true", "false", "yes", "no", "1", "0"]).mean()
     if boolean_ratio >= 0.85:
@@ -115,7 +145,7 @@ def profile_numeric(series: pd.Series) -> tuple[dict[str, Any], list[dict[str, A
 
 
 def profile_categorical(series: pd.Series) -> dict[str, Any]:
-    values = series[~series.map(is_empty_value)].astype(str).str.strip()
+    values = series[~empty_mask(series)].astype(str).str.strip()
     if values.empty:
         return {"uniqueCount": 0, "topValues": [], "unusualCategories": []}
     counts = values.value_counts(dropna=True)
@@ -135,7 +165,7 @@ def profile_categorical(series: pd.Series) -> dict[str, Any]:
 
 
 def profile_date(series: pd.Series) -> tuple[dict[str, Any], int]:
-    non_empty = series[~series.map(is_empty_value)]
+    non_empty = series[~empty_mask(series)]
     dates = clean_datetime(non_empty)
     valid = dates.dropna()
     invalid_count = int(dates.isna().sum())
@@ -165,10 +195,11 @@ def profile_table(table: Any, roles: dict[str, str] | None = None) -> dict[str, 
 
     for column in df.columns:
         series = df[column]
-        missing_count = int(series.map(is_empty_value).sum())
+        missing = empty_mask(series)
+        missing_count = int(missing.sum())
         missing_total += missing_count
-        non_empty = series[~series.map(is_empty_value)]
-        dtype = detect_data_type(series)
+        non_empty = series[~missing]
+        dtype = detect_data_type(series, str(column))
         unique_count = int(non_empty.astype(str).nunique()) if not non_empty.empty else 0
 
         numeric_stats: dict[str, Any] | None = None
@@ -192,7 +223,8 @@ def profile_table(table: Any, roles: dict[str, str] | None = None) -> dict[str, 
             dtype == "categorical" and unique_count / max(len(non_empty), 1) >= 0.6
         )
         if should_check_pattern and not non_empty.empty:
-            patterns = non_empty.astype(str).map(infer_format_pattern).value_counts()
+            pattern_sample = inference_sample(non_empty, 500)
+            patterns = pattern_sample.astype(str).map(infer_format_pattern).value_counts()
             if len(patterns) > 1 and patterns.iloc[0] / max(patterns.sum(), 1) < 0.85:
                 inconsistent_formats.append({
                     "column": column,

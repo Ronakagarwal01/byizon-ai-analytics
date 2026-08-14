@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.exceptions import InvalidTag
 
 
 _DATA_DIR = os.getenv("BYIZON_DATA_DIR", "").strip() or os.path.join(os.path.dirname(__file__), "data")
@@ -225,6 +226,23 @@ def _jwt_secret() -> bytes:
 
 def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def seal_share_password(password: str) -> str:
+    """Encrypt an auto-generated password for restart-safe owner retrieval."""
+    nonce = os.urandom(12)
+    encrypted = AESGCM(_server_key()).encrypt(nonce, password.encode("utf-8"), b"auto-website-password")
+    return _b64(nonce + encrypted)
+
+
+def unseal_share_password(token: str) -> str:
+    if not token:
+        return ""
+    try:
+        payload = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        return AESGCM(_server_key()).decrypt(payload[:12], payload[12:], b"auto-website-password").decode("utf-8")
+    except (ValueError, UnicodeDecodeError, InvalidTag):
+        return ""
 
 
 def _issue_access_token(share_id: str) -> str:

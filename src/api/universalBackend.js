@@ -530,6 +530,15 @@ export async function getJsonDashboardMetadata(dashboardId) {
   return payload.dashboard;
 }
 
+export async function getAutoWebsiteStatus(sessionId) {
+  const response = await apiFetch(`${apiBase()}/api/auto-website/${encodeURIComponent(sessionId)}`);
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || 'Automatic website status is unavailable.');
+  }
+  return payload.website;
+}
+
 export async function unlockJsonDashboard(dashboardId, password) {
   const response = await apiFetch(`${apiBase()}/api/dashboards/${encodeURIComponent(dashboardId)}/access`, {
     method: 'POST',

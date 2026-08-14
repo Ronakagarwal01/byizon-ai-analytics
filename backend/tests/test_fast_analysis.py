@@ -37,6 +37,22 @@ class FastAnalysisTests(unittest.TestCase):
         self.assertEqual(result["dataScience"]["status"], "processing")
         self.assertFalse(result["dataScience"]["modelTraining"]["trained"])
 
+    def test_quick_result_can_skip_report_and_bound_raw_preview(self) -> None:
+        content = (Path(__file__).parent / "fixtures" / "analytics_contract.csv").read_bytes()
+        parsed = parse_file("analytics_contract.csv", content)
+        prepared = prepare_analysis(parsed)
+        result = build_analysis_result(
+            prepared,
+            include_data_science=False,
+            include_report=False,
+            row_limit=2,
+        )
+
+        self.assertEqual(len(result["rows"]), 2)
+        self.assertIsNone(result["report"])
+        self.assertEqual(result["llmContext"]["policy"], "processed-evidence-only-no-raw-rows")
+        self.assertNotIn("rows", result["llmContext"])
+
     def test_progress_uses_persisted_processing_state(self) -> None:
         session = create_session(
             {

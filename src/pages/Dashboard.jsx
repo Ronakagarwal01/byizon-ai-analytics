@@ -5,7 +5,7 @@ import SecureExportDialog from '../components/SecureExportDialog';
 import { useData } from '../context/DataContext';
 import { recomputeFilteredKPIs } from '../api/analyticsEngine';
 import { askDataChat } from '../api/huggingface';
-import { refreshConnectedSource } from '../api/universalBackend';
+import { getAutoWebsiteStatus, refreshConnectedSource } from '../api/universalBackend';
 import { useChartTheme } from '../utils/chartTheme';
 import * as XLSX from 'xlsx';
 import {
@@ -15,17 +15,18 @@ import {
 } from 'recharts';
 import {
   DollarSign, ShoppingCart, TrendingUp, TrendingDown, Users, BarChart2,
-  Share2, Download, RefreshCw, FileSpreadsheet,
+  Download, RefreshCw, FileSpreadsheet,
   Sparkles, AlertTriangle, CheckCircle2, Target, Send, Zap, Loader2,
   Filter, ChevronLeft, ChevronRight, ChevronDown, DownloadCloud,
-  Activity, Copy, RotateCcw, Square, PanelBottomClose, PanelBottomOpen
+  Activity, Copy, RotateCcw, Square, PanelBottomClose, PanelBottomOpen,
+  ExternalLink, Globe2, LockKeyhole
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-const VISUAL_COLORS = ['#8f4e2d', '#b86b3d', '#c98554', '#a8795b', '#6f8063', '#d9b894'];
-const POSITIVE_CHART_COLOR = '#6f8063';
-const WARNING_CHART_COLOR = '#c98554';
-const SOFT_CHART_COLOR = '#a8795b';
+const VISUAL_COLORS = ['#a8552f', '#2f9e68', '#e67e22', '#7c5ce5', '#d94f5c', '#2878c8'];
+const POSITIVE_CHART_COLOR = '#2f9e68';
+const WARNING_CHART_COLOR = '#e67e22';
+const SOFT_CHART_COLOR = '#7c5ce5';
 const EMPTY_ARRAY = [];
 const EMPTY_OBJECT = {};
 const DEFAULT_DASHBOARD_QUALITY = { completeness: 0, quality: 0 };
@@ -377,6 +378,8 @@ export default function Dashboard() {
   const [debugMode, setDebugMode] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [secureDialogMode, setSecureDialogMode] = useState(null);
+  const [autoWebsite, setAutoWebsite] = useState(uploadedData?.autoWebsite || { status: 'queued' });
+  const [copiedWebsiteField, setCopiedWebsiteField] = useState('');
   const rowsPerPage = 10;
   const analyticsDataset = uploadedData?.analyticsDataset || null;
   const dashboardDataset = analyticsDataset?.dashboard || EMPTY_OBJECT;
@@ -402,6 +405,41 @@ export default function Dashboard() {
     setExpandedProducts({});
     setExpandedCustomers({});
   }, [uploadedData?.fileName]);
+
+  useEffect(() => {
+    const sessionId = uploadedData?.sessionId;
+    if (!sessionId) return undefined;
+    let cancelled = false;
+    let timer;
+    const passwordKey = `byizon:auto-website-password:${sessionId}`;
+    const savedPassword = sessionStorage.getItem(passwordKey) || '';
+    setAutoWebsite({ ...(uploadedData.autoWebsite || { status: 'queued' }), ...(savedPassword ? { password: savedPassword } : {}) });
+
+    const poll = async () => {
+      try {
+        const website = await getAutoWebsiteStatus(sessionId);
+        if (cancelled) return;
+        if (website.password) sessionStorage.setItem(passwordKey, website.password);
+        const password = website.password || sessionStorage.getItem(passwordKey) || '';
+        setAutoWebsite({ ...website, ...(password ? { password } : {}) });
+        if (!['error'].includes(website.status) && (website.status !== 'ready' || !password)) timer = window.setTimeout(poll, 1600);
+      } catch {
+        if (!cancelled) timer = window.setTimeout(poll, 2400);
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [uploadedData?.sessionId]);
+
+  const copyWebsiteValue = async (field, value) => {
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    setCopiedWebsiteField(field);
+    window.setTimeout(() => setCopiedWebsiteField(current => current === field ? '' : current), 1800);
+  };
 
   // Hook Ctrl+Shift+D for Developer Debug mode toggle
   useEffect(() => {
@@ -588,7 +626,6 @@ export default function Dashboard() {
     () => allAnomalies.filter(a => getAnomalySeverity(a) === 'Info'),
     [allAnomalies]
   );
-  const detectionConfidence = uploadedData?.detectionConfidence;
   const businessSummary = uploadedData?.businessSummary;
   const primaryTableProfile = useMemo(() => {
     const profiles = uploadedData?.tableProfiles || [];
@@ -681,12 +718,6 @@ export default function Dashboard() {
       .slice(0, 2);
   }, [businessSummary?.salesLabel, dashboardCharts, visualCharts.categories, visualCharts.marginByCategory, visualCharts.regions]);
 
-  const displayConfidence = useMemo(() => {
-    if (!detectionConfidence) return 0;
-    const conf = detectionConfidence;
-    return conf <= 1 ? parseFloat((conf * 100).toFixed(1)) : conf;
-  }, [detectionConfidence]);
-
   const totalPages = Math.ceil((filteredRows || []).length / rowsPerPage);
   const paginatedRows = (filteredRows || []).slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
 
@@ -769,22 +800,7 @@ export default function Dashboard() {
   return (
     <div className="app-layout">
       <Sidebar />
-      <main className="main-content dashboard-page">
-
-        {/* Active dataset summary */}
-        <div className="data-banner dashboard-source-strip">
-          <FileSpreadsheet size={15} />
-          <span>Active Dataset</span>
-          <span className="data-banner-file">{uploadedData.fileName}</span>
-          <span className="data-banner-meta">
-            {uploadedData.datasetType} · {(uploadedData.rowCount ?? 0).toLocaleString()} rows · {(dashboardColumns || []).length} columns · Quality {dataQuality.quality}%
-          </span>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button className="btn-outline" style={{ fontSize: 11, padding: '4px 10px', gap: 4 }} onClick={() => setUploadedData(null)}>
-              Change file
-            </button>
-          </div>
-        </div>
+      <main className="main-content dashboard-page executive-dashboard">
 
         {uploadedData.analysisStatus === 'processing' && (
           <div className="dashboard-analysis-progress" role="status" aria-live="polite">
@@ -825,54 +841,45 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Dashboard Header */}
-        <div className="page-header" style={{ marginBottom: 20 }}>
-          <div>
-            <span className="premium-page-eyebrow"><Sparkles size={14} /> AI Generated Dashboard</span>
-            <h1 className="page-title">{dashboardDisplayTitle(uploadedData)}</h1>
-            <p className="page-subtitle">
-              Your uploaded data is organized into key metrics, trends, quality checks, and actionable insights.
-            </p>
-          </div>
-          <div className="page-actions">
-            <button className="btn-outline" onClick={handleRefresh} style={{ gap: 6 }}>
-              <RefreshCw size={14} style={{ animation: refreshing ? 'spin 0.7s linear infinite' : 'none' }} />
-              Refresh
-            </button>
-            <div style={{ position: 'relative', display: 'inline-block' }}>
-              <button
-                className="btn-outline"
-                style={{ gap: 6 }}
-                id="btn-export-dropdown"
-                onClick={() => setShowExportMenu(v => !v)}
-              >
-                <Download size={14} /> Export Options
-              </button>
-              <div className="export-menu" style={{
-                display: showExportMenu ? 'flex' : 'none',
-                position: 'absolute',
-                top: 'calc(100% + 8px)',
-                right: 0,
-                zIndex: 30,
-                minWidth: 190,
-                flexDirection: 'column',
-                gap: 4,
-                padding: 8,
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 8,
-                boxShadow: '0 16px 40px rgba(0,0,0,0.35)'
-              }}>
-                <button onClick={handleExportExcel}>Excel Workbook</button>
-                <button onClick={handleExportCSV}>CSV File</button>
-                <button onClick={() => { setShowExportMenu(false); setSecureDialogMode('pdf'); }}>Password-protected PDF</button>
+        {/* Protected live dashboard publishing */}
+        <section className="dashboard-publish-panel">
+          <div className="dashboard-publish-steps" aria-label="Protected dashboard publishing status">
+            {[
+              ['Reading dashboard', 'Data prepared', true],
+              ['Creating live website', autoWebsite.status === 'ready' ? 'Stitch website ready' : 'Stitch is generating', autoWebsite.status === 'ready'],
+              ['Optimizing access', autoWebsite.status === 'ready' ? 'Interactions enabled' : 'Wiring interactions', autoWebsite.status === 'ready'],
+              ['Protecting dashboard', autoWebsite.status === 'ready' ? 'Password required' : 'Preparing security', autoWebsite.status === 'ready'],
+              ['Ready to publish', autoWebsite.status === 'ready' ? 'Protected link ready' : autoWebsite.status === 'error' ? 'Generation failed' : 'Working automatically', autoWebsite.status === 'ready'],
+            ].map(([label, status, complete]) => (
+              <div className={`dashboard-publish-step ${complete ? 'complete' : 'current'}`} key={label}>
+                {complete ? <CheckCircle2 size={16} /> : <Loader2 size={16} className={autoWebsite.status === 'error' ? '' : 'spin'} />}
+                <span><strong>{label}</strong><small>{status}</small></span>
               </div>
-            </div>
-            <button className="btn-primary" style={{ gap: 6 }} onClick={() => setSecureDialogMode('share')}>
-              <Share2 size={14} /> Secure Share
-            </button>
+            ))}
           </div>
-        </div>
+          <div className="dashboard-publish-browser">
+            {autoWebsite.status === 'ready' ? (
+              <div className="dashboard-publish-credentials">
+                <div className="dashboard-credential-field website-link-field">
+                  <span>Website link</span>
+                  <a href={autoWebsite.urlPath} target="_blank" rel="noreferrer">{`${window.location.origin}${autoWebsite.urlPath}`}</a>
+                  <button onClick={() => copyWebsiteValue('link', `${window.location.origin}${autoWebsite.urlPath}`)} title="Copy website link">
+                    {copiedWebsiteField === 'link' ? <><CheckCircle2 size={15} /> Copied</> : <><Copy size={15} /> Copy</>}
+                  </button>
+                </div>
+                <div className="dashboard-credential-field password-field">
+                  <span>Password</span>
+                  <code>{autoWebsite.password || 'Loading password...'}</code>
+                  <button disabled={!autoWebsite.password} onClick={() => copyWebsiteValue('password', autoWebsite.password)} title="Copy website password">
+                    {copiedWebsiteField === 'password' ? <><CheckCircle2 size={15} /> Copied</> : <><Copy size={15} /> Copy</>}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="dashboard-publish-building"><Loader2 className="spin" size={16} /> {autoWebsite.status === 'error' ? autoWebsite.error : 'Website link and password are being prepared automatically.'}</div>
+            )}
+          </div>
+        </section>
 
         {/* Tab Buttons bar */}
         <div style={{ display: 'flex', gap: 12, borderBottom: '1px solid var(--border-subtle)', marginBottom: 24, paddingBottom: 1 }}>
@@ -972,70 +979,8 @@ export default function Dashboard() {
         {/* â”€â”€ TAB CONTENT: OVERVIEW DASHBOARD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {activeTab === 'overview' && (
           <div className="animate-fadeIn">
-            {/* Dataset Overview Card (Fix #5) */}
-            <div className="dataset-overview-grid">
-              <div className="dataset-overview-item">
-                <span className="dataset-overview-label">Dataset Type</span>
-                <span className="dataset-overview-val">{uploadedData.datasetType}</span>
-              </div>
-              <div className="dataset-overview-item">
-                <span className="dataset-overview-label">Mapping Confidence</span>
-                <span className="dataset-overview-val" style={{ color: displayConfidence > 92 ? 'var(--success)' : 'var(--warning)' }}>
-                  {displayConfidence}%
-                </span>
-              </div>
-              <div className="dataset-overview-item">
-                <span className="dataset-overview-label">Total Rows</span>
-                <span className="dataset-overview-val">{uploadedData.rowCount?.toLocaleString()}</span>
-              </div>
-              <div className="dataset-overview-item">
-                <span className="dataset-overview-label">Total Columns</span>
-                <span className="dataset-overview-val">{uploadedData.colCount}</span>
-              </div>
-              <div className="dataset-overview-item">
-                <span className="dataset-overview-label">Duplicate Rows</span>
-                <span className="dataset-overview-val">{dataQuality.duplicatesCount || 0}</span>
-              </div>
-              <div className="dataset-overview-item">
-                <span className="dataset-overview-label">Missing Values %</span>
-                <span className="dataset-overview-val">{(100 - dataQuality.completeness).toFixed(1)}%</span>
-              </div>
-              <div className="dataset-overview-item">
-                <span className="dataset-overview-label">Statistical Highlights</span>
-                <span className="dataset-overview-val">{dataQuality.outliersCount || 0}</span>
-              </div>
-              <div className="dataset-overview-item">
-                <span className="dataset-overview-label">Quality Score</span>
-                <span className="dataset-overview-val" style={{ color: dataQuality.quality > 80 ? 'var(--success)' : 'var(--warning)' }}>
-                  {dataQuality.quality}/100
-                </span>
-              </div>
-            </div>
-
-            {/* dynamic KPIs with Explainability report hover tooltips */}
-            <div className="kpi-grid">
-              {activeKPIs.map((kpi, i) => {
-                const IconComponent = ICON_MAP[kpi.label] || BarChart2;
-                const iconBg = ICON_BKGS[kpi.label] || 'rgba(154,85,47,0.12)';
-                return (
-                  <KPICard
-                    key={kpi.label}
-                    label={kpi.label}
-                    value={kpi.value}
-                    desc={kpi.desc}
-                    trend={kpi.trend || 'neutral'}
-                    trendValue={kpi.trendValue || 'N/A'}
-                    icon={IconComponent}
-                    iconBg={iconBg}
-                    index={i}
-                    explainability={kpi.explainability}
-                  />
-                );
-              })}
-            </div>
-
             {(plannedSections.length > 0 || plannedInsights.length > 0 || skippedColumns.length > 0) && (
-              <div className="report-section animate-fadeInUp" style={{ marginBottom: 24 }}>
+              <div className="report-section dashboard-technical-plan animate-fadeInUp" style={{ marginBottom: 24 }}>
                 <div className="report-section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Target size={18} color="var(--blue-400)" />
                   Adaptive Dashboard Story Plan
@@ -1104,18 +1049,14 @@ export default function Dashboard() {
             )}
 
             {/* Dynamic Local/AI Executive Summary */}
-            {uploadedData.summary && (
+            {typeof uploadedData.summary === 'string' && uploadedData.summary.trim() && (
               <div className="report-hero animate-fadeInUp" style={{ padding: '20px 24px', marginBottom: 24 }}>
                 <div className="report-meta" style={{ marginBottom: 8 }}>
                   <span className="badge badge-blue"><Sparkles size={11} /> Executive Summary</span>
                 </div>
-                <p
-                  style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}
-                  dangerouslySetInnerHTML={{
-                    __html: uploadedData.summary
-                      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                  }}
-                />
+                <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-line' }}>
+                  {uploadedData.summary}
+                </p>
               </div>
             )}
 
@@ -1791,7 +1732,7 @@ function DashboardChatWidget({ data }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [collapsed, setCollapsed] = useState(false);
-  const chatEndRef = useRef(null);
+  const chatMessagesRef = useRef(null);
   const sessionId = data?.sessionId || analysisSession?.sessionId;
   const history = useMemo(() => analysisSession?.chatHistory || [], [analysisSession?.chatHistory]);
 
@@ -1846,7 +1787,8 @@ function DashboardChatWidget({ data }) {
   };
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const messages = chatMessagesRef.current;
+    if (messages) messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' });
   }, [history, loading, error]);
 
   return (
@@ -1873,7 +1815,7 @@ function DashboardChatWidget({ data }) {
 
       {!collapsed && (
         <>
-          <div className="analysis-chat-messages">
+          <div ref={chatMessagesRef} className="analysis-chat-messages">
             {history.length === 0 && (
               <div className="analysis-chat-empty">
                 <Zap size={22} color="var(--blue-600)" />
@@ -1919,7 +1861,6 @@ function DashboardChatWidget({ data }) {
                 <button type="button" onClick={regenerateLast}>Retry</button>
               </div>
             )}
-            <div ref={chatEndRef} />
           </div>
 
           <div className="analysis-chat-composer">

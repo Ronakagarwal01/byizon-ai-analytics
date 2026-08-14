@@ -95,11 +95,14 @@ def _parse_csv_like(file_name: str, content: bytes, sep: str | None = None) -> l
 def _parse_excel(file_name: str, content: bytes) -> list[ParsedTable]:
     warnings: list[str] = []
     try:
-        workbook = pd.ExcelFile(io.BytesIO(content))
+        try:
+            workbook = pd.ExcelFile(io.BytesIO(content), engine="calamine")
+        except ImportError:
+            workbook = pd.ExcelFile(io.BytesIO(content), engine="openpyxl")
     except ImportError as exc:
         raise ValueError(
-            "Excel parsing needs the Python package 'openpyxl' for .xlsx files. "
-            "Install it with: python -m pip install openpyxl"
+            "Excel parsing needs python-calamine or openpyxl. "
+            "Install backend requirements before uploading Excel files."
         ) from exc
 
     tables: list[ParsedTable] = []

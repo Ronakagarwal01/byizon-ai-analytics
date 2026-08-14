@@ -253,11 +253,17 @@ export default function Connections() {
         <section className="connections-hero">
           <div>
             <span className="connections-eyebrow"><PlugZap size={14} /> Unified data connections</span>
-            <h1>Connect your business tools</h1>
+            <h1>Connect every source to one workspace</h1>
             <p>
-              Add a shared data URL or authorize a business platform. Byizon keeps each
-              source traceable, then prepares it for one real-time analytical workspace.
+              Authorize CRM, workspace, support, and project tools once. Byizon keeps
+              each source traceable, sync-ready, and available for dashboards, reports,
+              and AI answers.
             </p>
+            <div className="connections-hero-points" aria-label="Connection benefits">
+              <span><ShieldCheck size={15} /> Official OAuth</span>
+              <span><Database size={15} /> Live data sync</span>
+              <span><CheckCircle2 size={15} /> Audit-ready context</span>
+            </div>
           </div>
           <div className="connection-flow" aria-label="Connection workflow">
             <span><Link2 size={17} /> Connect</span>

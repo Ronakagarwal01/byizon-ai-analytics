@@ -86,6 +86,28 @@ def prepare_universal_pipeline(
     metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Commit, verify, parse once, and bulk-load the uploaded dataset."""
+    prepared = prepare_upload_source(
+        file_name,
+        content,
+        owner_user_id,
+        source_kind,
+        content_type=content_type,
+        metadata=metadata,
+    )
+    ingest_prepared_pipeline(prepared)
+    return prepared
+
+
+def prepare_upload_source(
+    file_name: str,
+    content: bytes,
+    owner_user_id: str,
+    source_kind: str,
+    *,
+    content_type: str,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Persist, verify, and parse an upload without waiting for warehouse expansion."""
     dataset = store_dataset(
         file_name,
         content,
@@ -113,6 +135,34 @@ def prepare_universal_pipeline(
         raise ValueError("Stored source verification failed; analysis aborted.")
     update_pipeline_stage(run_id, owner_user_id, "stored_source_verified")
     parsed = parse_file(file_name, stored_content)
+    return {
+        "fileName": file_name,
+        "content": stored_content,
+        "ownerUserId": owner_user_id,
+        "sourceKind": source_kind,
+        "dataset": dataset,
+        "runId": run_id,
+        "parsed": parsed,
+        "sqlWarehouse": {
+            "backend": "queued",
+            "datasetId": dataset["datasetId"],
+            "databaseFirst": True,
+            "fullRowsStored": 0,
+            "normalizedCellCount": 0,
+            "prebuiltQueryCount": 5,
+            "rawRowsSentToModel": False,
+            "status": "processing",
+        },
+    }
+
+
+def ingest_prepared_pipeline(prepared: dict[str, Any]) -> dict[str, Any]:
+    """Bulk-load a verified parsed upload into the SQL warehouse in a worker."""
+    dataset = prepared["dataset"]
+    stored_content = prepared["content"]
+    parsed = prepared["parsed"]
+    owner_user_id = prepared["ownerUserId"]
+    run_id = prepared["runId"]
     sql_warehouse = ingest_parsed_dataset(
         dataset=dataset,
         content=stored_content,
@@ -133,16 +183,8 @@ def prepare_universal_pipeline(
         },
     )
     update_pipeline_stage(run_id, owner_user_id, "sql_warehouse_ingested")
-    return {
-        "fileName": file_name,
-        "content": stored_content,
-        "ownerUserId": owner_user_id,
-        "sourceKind": source_kind,
-        "dataset": dataset,
-        "runId": run_id,
-        "parsed": parsed,
-        "sqlWarehouse": sql_warehouse,
-    }
+    prepared["sqlWarehouse"] = {**sql_warehouse, "status": "complete"}
+    return prepared["sqlWarehouse"]
 
 
 def attach_universal_metadata(

@@ -8,6 +8,7 @@ import mimetypes
 import os
 import re
 import traceback
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -34,6 +35,8 @@ from .analytics.sql_warehouse import warehouse_configuration
 from .analytics.universal_pipeline import (
     attach_universal_metadata,
     finalize_universal_pipeline,
+    ingest_prepared_pipeline,
+    prepare_upload_source,
     prepare_universal_pipeline,
     run_universal_pipeline,
 )
@@ -91,7 +94,9 @@ from .share_manager import (
     cookie_token,
     create_protected_share,
     revoke_share,
+    seal_share_password,
     share_metadata,
+    unseal_share_password,
     verify_share_password,
 )
 from .voice.agent import answer as voice_answer, configured as ai_voice_configured, huggingface_configured
@@ -137,6 +142,8 @@ _ANALYSIS_EXECUTOR = ThreadPoolExecutor(
     max_workers=_BACKGROUND_WORKERS,
     thread_name_prefix="byizon-analysis",
 )
+_WEBSITE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="byizon-stitch-site")
+_AUTO_WEBSITE_PASSWORDS: dict[str, str] = {}
 _DEFAULT_ANALYZE_FILE = analyze_file
 
 
@@ -145,6 +152,7 @@ AUTH_DISABLED = os.getenv(
     "BYIZON_AUTH_DISABLED",
     "false",
 ).strip().lower() in {"1", "true", "yes", "on"}
+LOCAL_FRONTEND_ORIGIN_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$")
 LOCAL_FRONTEND_ORIGINS = {"http://127.0.0.1:5173", "http://localhost:5173"}
 REQUEST_ORIGIN: ContextVar[str] = ContextVar("request_origin", default="")
 DIST_DIR = Path(__file__).resolve().parents[1] / "dist"
@@ -246,7 +254,8 @@ def _configured_frontend_origins() -> set[str]:
 
 def _cors_headers() -> list[tuple[bytes, bytes]]:
     request_origin = REQUEST_ORIGIN.get().strip().rstrip("/")
-    if not request_origin or request_origin not in _configured_frontend_origins():
+    is_allowed_local = bool(LOCAL_FRONTEND_ORIGIN_RE.fullmatch(request_origin))
+    if not request_origin or (request_origin not in _configured_frontend_origins() and not is_allowed_local):
         return []
     return [
         (b"access-control-allow-origin", request_origin.encode("utf-8")),
@@ -495,9 +504,12 @@ def _complete_background_analysis(
         )
 
     try:
+        report(74, "sql_warehouse_ingest", "Storing rows and preparing SQL evidence in PostgreSQL...")
+        ingest_prepared_pipeline(prepared_pipeline)
         deep_result = build_analysis_result(
             prepared_analysis,
             include_data_science=True,
+            row_limit=500,
             on_progress=report,
         )
         finalize_universal_pipeline(deep_result, prepared_pipeline)
@@ -509,6 +521,11 @@ def _complete_background_analysis(
             prepared_pipeline["sourceKind"],
             prepared_pipeline["fileName"],
         )
+        current_session = get_session(session_id, owner_user_id)
+        current_analysis = (current_session or {}).get("analysis") or {}
+        for key in ("autoWebsite", "studioCustomization"):
+            if current_analysis.get(key):
+                deep_result[key] = current_analysis[key]
         update_analysis(
             session_id,
             deep_result,
@@ -528,14 +545,77 @@ def _complete_background_analysis(
         )
 
 
+def _generate_auto_stitch_website(
+    session_id: str,
+    quick_analysis: dict[str, Any],
+    owner_user_id: str,
+) -> None:
+    prompt = (
+        "Create a polished, responsive and fully interactive business analytics website from this dashboard. "
+        "Preserve every grounded KPI and chart value. Include working navigation, filters, search, tabs, "
+        "tooltips and mobile layouts. Use a professional multi-color enterprise visual system."
+    )
+    try:
+        session = get_session(session_id, owner_user_id)
+        if not session:
+            return
+        current = dict(session.get("analysis") or quick_analysis)
+        current["autoWebsite"] = {"status": "generating", "stage": "stitch_generation"}
+        update_analysis(session_id, current, owner_user_id, analysis_status=str(session.get("analysisStatus") or "processing"))
+
+        result = plan_dashboard(prompt, quick_analysis, use_stitch=True)
+        stitch = result.get("stitch") or {}
+        if stitch.get("status") != "generated":
+            raise RuntimeError(stitch.get("error") or "Stitch website generation is unavailable.")
+        customized = {**stitch, "prompt": prompt, "plan": result.get("plan")}
+        protected_analysis = {**quick_analysis, "studioCustomization": customized}
+        share = create_protected_share(
+            session_id,
+            protected_analysis,
+            expires_in_days=7,
+            created_by=owner_user_id,
+        )
+        _AUTO_WEBSITE_PASSWORDS[session_id] = str(share["password"])
+        password_token = seal_share_password(str(share["password"]))
+
+        session = get_session(session_id, owner_user_id)
+        if not session:
+            return
+        current = dict(session.get("analysis") or quick_analysis)
+        current["studioCustomization"] = customized
+        current["autoWebsite"] = {
+            "status": "ready",
+            "stage": "protected_link_ready",
+            "shareId": share["shareId"],
+            "urlPath": f"/custom-dashboard/{share['shareId']}",
+            "expiresAt": share["expiresAt"],
+            "passwordRequired": True,
+            "passwordToken": password_token,
+        }
+        update_analysis(session_id, current, owner_user_id, analysis_status=str(session.get("analysisStatus") or "processing"))
+    except Exception as exc:
+        LOGGER.exception("Automatic Stitch website failed for session %s", session_id)
+        session = get_session(session_id, owner_user_id)
+        if not session:
+            return
+        current = dict(session.get("analysis") or quick_analysis)
+        current["autoWebsite"] = {
+            "status": "error",
+            "stage": "stitch_generation_failed",
+            "error": str(exc)[:300],
+        }
+        update_analysis(session_id, current, owner_user_id, analysis_status=str(session.get("analysisStatus") or "processing"))
+
+
 def _start_fast_upload_analysis(
     file_name: str,
     content: bytes,
     owner_user_id: str,
     *,
     content_type: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    prepared_pipeline = prepare_universal_pipeline(
+) -> tuple[dict[str, Any], dict[str, Any], tuple[Any, ...]]:
+    started_at = time.perf_counter()
+    prepared_pipeline = prepare_upload_source(
         file_name,
         content,
         owner_user_id,
@@ -543,37 +623,51 @@ def _start_fast_upload_analysis(
         content_type=content_type,
         metadata=None,
     )
+    parsed_at = time.perf_counter()
     prepared_analysis = prepare_analysis(prepared_pipeline["parsed"])
-    quick_result = build_analysis_result(prepared_analysis, include_data_science=False)
+    analyzed_at = time.perf_counter()
+    quick_result = build_analysis_result(
+        prepared_analysis,
+        include_data_science=False,
+        include_report=False,
+        row_limit=250,
+    )
     attach_universal_metadata(
         quick_result,
         prepared_pipeline,
         analysis_status="processing",
-        progress_value=70,
+        progress_value=68,
         progress_stage="quick_dashboard_ready",
-        progress_message="Dashboard is ready. Advanced analysis is running in the background.",
+        progress_message="Dashboard is ready. PostgreSQL evidence and advanced analysis are running in the background.",
     )
-    _persist_analysis_contract(
-        quick_result,
-        prepared_pipeline["dataset"],
-        content,
-        owner_user_id,
-        "manual_upload",
-        file_name,
-    )
+    _attach_source_provenance(quick_result, content, "manual_upload", file_name)
+    quick_result["sourceProvenance"]["databaseRecordId"] = prepared_pipeline["dataset"]["datasetId"]
+    quick_result["sourceProvenance"]["databaseSha256"] = prepared_pipeline["dataset"]["sha256"]
+    quick_result["performance"] = {
+        "targetSeconds": 5,
+        "parseSeconds": round(parsed_at - started_at, 3),
+        "dashboardAnalysisSeconds": round(analyzed_at - parsed_at, 3),
+        "quickResponseSeconds": round(time.perf_counter() - started_at, 3),
+        "heavyWorkMovedToBackground": True,
+    }
+    quick_result["modelBoundary"] = {
+        "modelInvokedDuringUpload": False,
+        "rawRowsSentToModel": False,
+        "modelInput": "compact parameterized SQL evidence only",
+    }
+    quick_result["autoWebsite"] = {"status": "queued", "stage": "waiting_for_stitch"}
     session = create_session(
         quick_result,
         owner_user_id=owner_user_id,
         dataset_id=prepared_pipeline["dataset"]["datasetId"],
         analysis_status="processing",
     )
-    _ANALYSIS_EXECUTOR.submit(
-        _complete_background_analysis,
+    background_args = (
         session["sessionId"],
         prepared_pipeline,
         prepared_analysis,
     )
-    return session, prepared_pipeline["dataset"]
+    return session, prepared_pipeline["dataset"], background_args
 
 
 async def app(scope, receive, send):
@@ -1243,7 +1337,7 @@ async def app(scope, receive, send):
             if not upload:
                 raise ValueError("No file field found in upload.")
             safe_name = _sanitize_filename(upload["filename"])
-            session, dataset = await asyncio.to_thread(
+            session, dataset, background_args = await asyncio.to_thread(
                 _start_fast_upload_analysis,
                 safe_name,
                 upload["content"],
@@ -1258,6 +1352,22 @@ async def app(scope, receive, send):
                 "analysisStatus": session["analysisStatus"],
                 "analysis": session["analysis"],
             })
+            # Give the response to the browser before CPU-heavy SQL ingestion and
+            # advanced analysis begin competing for the worker process.
+            asyncio.get_running_loop().call_later(
+                0.1,
+                _ANALYSIS_EXECUTOR.submit,
+                _complete_background_analysis,
+                *background_args,
+            )
+            asyncio.get_running_loop().call_later(
+                0.2,
+                _WEBSITE_EXECUTOR.submit,
+                _generate_auto_stitch_website,
+                session["sessionId"],
+                dict(session["analysis"]),
+                workspace_user_id,
+            )
             return
 
         if method == "GET" and path.startswith("/api/analysis/"):
@@ -1267,6 +1377,61 @@ async def app(scope, receive, send):
                 await _send_json(send, 404, {"ok": False, "error": "Analysis session not found."})
                 return
             await _send_json(send, 200, {"ok": True, "session": session, "analysis": session["analysis"]})
+            return
+
+        if method == "GET" and path.startswith("/api/auto-website/"):
+            session_id = path.rsplit("/", 1)[-1]
+            session = get_session(session_id, workspace_user_id)
+            if not session:
+                await _send_json(send, 404, {"ok": False, "error": "Analysis session not found."})
+                return
+            analysis = dict(session.get("analysis") or {})
+            website = dict(analysis.get("autoWebsite") or {"status": "not_started"})
+            if website.get("status") == "not_started":
+                website = {"status": "queued", "stage": "waiting_for_stitch"}
+                analysis["autoWebsite"] = website
+                update_analysis(
+                    session_id,
+                    analysis,
+                    workspace_user_id,
+                    analysis_status=str(session.get("analysisStatus") or "complete"),
+                )
+                _WEBSITE_EXECUTOR.submit(
+                    _generate_auto_stitch_website,
+                    session_id,
+                    analysis,
+                    workspace_user_id,
+                )
+            password = _AUTO_WEBSITE_PASSWORDS.get(session_id, "") or unseal_share_password(str(website.get("passwordToken") or ""))
+            if website.get("status") == "ready" and not password:
+                # Migrate websites created before restart-safe password storage.
+                # The old bcrypt hash cannot reveal its password, so issue one
+                # replacement link once and persist its encrypted credential.
+                share = create_protected_share(
+                    session_id,
+                    analysis,
+                    expires_in_days=7,
+                    created_by=workspace_user_id,
+                )
+                password = str(share["password"])
+                website.update({
+                    "shareId": share["shareId"],
+                    "urlPath": f"/custom-dashboard/{share['shareId']}",
+                    "expiresAt": share["expiresAt"],
+                    "passwordRequired": True,
+                    "passwordToken": seal_share_password(password),
+                })
+                analysis["autoWebsite"] = website
+                update_analysis(
+                    session_id,
+                    analysis,
+                    workspace_user_id,
+                    analysis_status=str(session.get("analysisStatus") or "complete"),
+                )
+            if password:
+                website["password"] = password
+            website.pop("passwordToken", None)
+            await _send_json(send, 200, {"ok": True, "website": website})
             return
 
         if method == "GET" and path.startswith("/api/analytics-dataset/"):

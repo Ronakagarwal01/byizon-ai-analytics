@@ -81,14 +81,18 @@ export default function Meetings() {
       <main className="main-content meetings-page">
         <section className="dark-hero-card meetings-hero">
           <span className="dark-kicker"><Video size={15} /> Meetings command center</span>
-          <h1>Generate and track Google Meet links</h1>
-          <p>Create a meeting manually or let Byizon create it through chat/voice. Every completed Meet link is saved here so you can copy or send it later.</p>
+          <h1>Create and manage Google Meet links</h1>
+          <p>Schedule meetings manually or through the Byizon assistant. Every generated link is saved to your workspace for quick access and sharing.</p>
           {latest?.url && (
             <div className="latest-meet-link">
-              <span><CheckCircle2 size={16} /> Latest meeting link</span>
-              <strong>{latest.url}</strong>
-              <button type="button" onClick={() => navigator.clipboard.writeText(latest.url)}><Copy size={14} /> Copy</button>
-              <a href={latest.url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Open</a>
+              <div className="latest-meet-details">
+                <span><CheckCircle2 size={16} /> Latest meeting</span>
+                <strong title={latest.url}>{latest.url}</strong>
+              </div>
+              <div className="latest-meet-actions">
+                <button type="button" onClick={() => navigator.clipboard.writeText(latest.url)}><Copy size={14} /> Copy</button>
+                <a href={latest.url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Open</a>
+              </div>
             </div>
           )}
         </section>

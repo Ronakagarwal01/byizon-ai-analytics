@@ -8,6 +8,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Clock,
   Database,
@@ -16,7 +17,7 @@ import {
   Mail,
   MessageSquare,
   Mic,
-  Paperclip,
+  Plus,
   Search,
   Send,
   Share2,
@@ -29,39 +30,134 @@ import {
   Trash2
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
-import { getConnectors, oauthStartUrl } from '../api/universalBackend';
+import { runPipeline } from '../api/pipeline';
+import { getConnectors } from '../api/universalBackend';
 import { useData } from '../context/DataContext';
 import { useWorkspaceUser, workspaceInitials } from '../utils/workspaceUser';
 
+function uploadFileMeta(fileName = '') {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  if (['xls', 'xlsx', 'xlsm'].includes(ext)) return { kind: 'excel', label: 'Spreadsheet' };
+  if (ext === 'csv') return { kind: 'csv', label: 'CSV file' };
+  if (['ppt', 'pptx'].includes(ext)) return { kind: 'powerpoint', label: 'Presentation' };
+  if (ext === 'pdf') return { kind: 'pdf', label: 'PDF document' };
+  if (['doc', 'docx'].includes(ext)) return { kind: 'word', label: 'Document' };
+  if (['json'].includes(ext)) return { kind: 'json', label: 'JSON data' };
+  if (['sql', 'sqlite', 'db'].includes(ext)) return { kind: 'database', label: 'Database export' };
+  return { kind: 'file', label: ext ? `${ext.toUpperCase()} file` : 'Uploaded file' };
+}
+
+function normalizeChatMessage(message) {
+  if (!message || typeof message !== 'object') return null;
+  const text = typeof message.text === 'string' ? message.text : '';
+  const rawAttachment = message.attachment && typeof message.attachment === 'object' ? message.attachment : null;
+  const attachmentName = rawAttachment?.name || '';
+  const attachment = attachmentName ? {
+    name: attachmentName,
+    ...uploadFileMeta(attachmentName),
+    ...rawAttachment,
+  } : null;
+  if (!text && !attachment && message.role === 'user') return null;
+  return {
+    ...message,
+    text,
+    attachment,
+  };
+}
+
+function sessionAnalysisSnapshot(data) {
+  if (!data) return null;
+  return {
+    ...data,
+    // Conversation history only needs a small sample to restore dashboard context.
+    // Keeping hundreds of complete spreadsheet rows here can exceed localStorage
+    // during send and crash the React tree.
+    rows: Array.isArray(data.rows) ? data.rows.slice(0, 50) : [],
+    rawRows: undefined,
+    sourceRows: undefined,
+  };
+}
+
+function persistChatSessionsSafely(sessions) {
+  try {
+    localStorage.setItem('byizon_chat_sessions', JSON.stringify(sessions));
+    return;
+  } catch (error) {
+    // Preserve the conversation even when a large analysis payload exceeds the
+    // browser storage quota. The active dashboard remains available in DataContext.
+    try {
+      const lightweight = sessions.map(({ analysis, ...session }) => ({
+        ...session,
+        analysis: analysis ? {
+          sessionId: analysis.sessionId,
+          fileName: analysis.fileName,
+          fileType: analysis.fileType,
+          rowCount: analysis.rowCount,
+          colCount: analysis.colCount,
+          columns: Array.isArray(analysis.columns) ? analysis.columns.slice(0, 100) : [],
+          analysisStatus: analysis.analysisStatus,
+          createdAt: analysis.createdAt,
+        } : null,
+      }));
+      localStorage.setItem('byizon_chat_sessions', JSON.stringify(lightweight));
+    } catch (fallbackError) {
+      console.warn('[Chat] conversation persistence failed:', fallbackError || error);
+    }
+  }
+}
+
+const CHAT_SESSIONS_KEY = 'byizon_chat_sessions';
+const ACTIVE_CHAT_SESSION_KEY = 'byizon_active_chat_session';
+
+function readStoredChatSessions() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CHAT_SESSIONS_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.map(session => ({
+      ...session,
+      messages: Array.isArray(session.messages) ? session.messages.map(normalizeChatMessage).filter(Boolean) : [],
+    })) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberedChatSessionId() {
+  return sessionStorage.getItem(ACTIVE_CHAT_SESSION_KEY) || '';
+}
+
 export default function Chat() {
   const navigate = useNavigate();
-  const { chatHistory, setSessionChatHistory } = useData();
+  const { uploadedData, chatHistory, setSessionChatHistory, setUploadedData, setPipelineStages } = useData();
   const user = useWorkspaceUser();
   const initials = workspaceInitials(user);
   const displayName = user.displayName || 'Super Admin';
 
+  const initialChatState = useMemo(() => {
+    const sessions = readStoredChatSessions();
+    const activeId = rememberedChatSessionId();
+    const activeSession = sessions.find(session => session.id === activeId);
+    return {
+      sessions,
+      activeId: activeSession ? activeId : '',
+      messages: activeSession?.messages || [],
+    };
+  }, []);
   const [input, setInput] = useState('');
-  const [messages, setMessages] = useState([]);
-  const [chatSessions, setChatSessions] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('byizon_chat_sessions') || '[]');
-    } catch {
-      return [];
-    }
-  });
-  const [activeSessionId, setActiveSessionId] = useState('');
-  const activeSessionIdRef = useRef('');
+  const [messages, setMessages] = useState(initialChatState.messages);
+  const [chatSessions, setChatSessions] = useState(initialChatState.sessions);
+  const [activeSessionId, setActiveSessionId] = useState(initialChatState.activeId);
+  const activeSessionIdRef = useRef(initialChatState.activeId);
   const [historyMenu, setHistoryMenu] = useState(null);
-  const [connectorCatalog, setConnectorCatalog] = useState([]);
   const [connectedApps, setConnectedApps] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [selectedUploadFile, setSelectedUploadFile] = useState(null);
+  const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef(null);
   const [rightPanelMode, setRightPanelMode] = useState('history'); // history, meeting, data
+  const [isRightPanelHidden, setIsRightPanelHidden] = useState(true);
   const bottomRef = useRef(null);
-
-  useEffect(() => {
-    localStorage.removeItem('byizon_active_chat_session');
-  }, []);
+  const selectedUploadMeta = useMemo(() => uploadFileMeta(selectedUploadFile?.name), [selectedUploadFile?.name]);
 
   useEffect(() => {
     const closeMenu = () => setHistoryMenu(null);
@@ -81,7 +177,6 @@ export default function Chat() {
   const refreshConnectedApps = useCallback(() => getConnectors()
     .then(payload => {
       const catalog = payload.catalog || [];
-      setConnectorCatalog(catalog);
       const catalogById = new Map(catalog.map(item => [item.id, item]));
       const activeConnections = (payload.connections || [])
         .filter(item => item.status === 'connected' && !item.requiresReconnect)
@@ -137,63 +232,64 @@ export default function Chat() {
     return (query ? sessions.filter(item => item.title.toLowerCase().includes(query)) : sessions).slice(0, 8);
   }, [chatHistory, chatSessions, historySearch]);
 
-  const appShortcuts = [
-    { label: 'Slack', connectorId: 'slack', icon: MessageSquare, color: '#e11d48' },
-    { label: 'Gmail', connectorId: 'google-workspace', capability: 'gmail', icon: Mail, color: '#ef4444' },
-    { label: 'Drive', connectorId: 'google-workspace', capability: 'drive', icon: Database, color: '#3b82f6' },
-    { label: 'HubSpot', connectorId: 'hubspot', color: '#f97316' },
-    { label: 'Jira', connectorId: 'jira', color: '#2563eb' },
-  ];
-
-  const isShortcutConnected = shortcut => connectedApps.some(app => app.connectorId === shortcut.connectorId);
-
-  const connectShortcut = (shortcut) => {
-    const connector = connectorCatalog.find(item => item.id === shortcut.connectorId);
-    if (connector?.oauthReady) {
-      window.location.assign(oauthStartUrl(shortcut.connectorId, '/chat', shortcut.capability || ''));
-      return;
-    }
-    navigate(`/connections?connector=${encodeURIComponent(shortcut.connectorId)}`);
-  };
-
-  const handleShortcut = (shortcut) => {
-    if (isShortcutConnected(shortcut)) {
-      setInput(current => current || `Ask ${shortcut.label} about `);
-      return;
-    }
-    connectShortcut(shortcut);
-  };
-
-  const handleLocalFileSelect = (event) => {
+  const handleLocalFileSelect = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    setInput(current => current || `Analyze uploaded file: ${file.name}`);
     event.target.value = '';
+    setSelectedUploadFile(file);
+    setUploadError('');
+    setUploadingFile(true);
+    setUploadedData(null);
+    setPipelineStages([]);
+
+    try {
+      const result = await runPipeline(file, (stageId, stageStatus, message) => {
+        setPipelineStages(previous => ({
+          ...previous,
+          [stageId]: { status: stageStatus, message },
+        }));
+      });
+      if (result.fileName !== file.name) {
+        throw new Error(`Source verification failed: selected ${file.name}, but analysis returned ${result.fileName}.`);
+      }
+      if (!result.sourceProvenance?.sha256) {
+        throw new Error('Source verification failed: the backend did not return a file fingerprint.');
+      }
+      setUploadedData({ ...result });
+    } catch (error) {
+      setUploadError(error.message || 'File upload failed. Please try another file.');
+    } finally {
+      setUploadingFile(false);
+    }
   };
 
   const persistSessions = (updater) => {
     setChatSessions(previous => {
       const next = typeof updater === 'function' ? updater(previous) : updater;
-      localStorage.setItem('byizon_chat_sessions', JSON.stringify(next));
+      persistChatSessionsSafely(next);
       return next;
     });
   };
 
-  const upsertActiveSession = (nextMessages) => {
-    const realTurns = nextMessages.filter(item => item?.text);
+  const upsertActiveSession = (nextMessages, analysisOverride = uploadedData) => {
+    const realTurns = nextMessages.map(normalizeChatMessage).filter(item => item?.text || item?.attachment);
     if (!realTurns.length) return '';
-    const firstUser = realTurns.find(item => item.role === 'user');
+    const firstUser = realTurns.find(item => item.role === 'user' && (item.text || item.attachment));
+    const analysis = sessionAnalysisSnapshot(analysisOverride);
     const sessionId = activeSessionIdRef.current || `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const session = {
       id: sessionId,
-      title: firstUser?.text || 'New conversation',
+      title: firstUser?.text || firstUser?.attachment?.name || 'New conversation',
       time: firstUser?.time || '',
       updatedAt: new Date().toISOString(),
       messages: realTurns,
+      analysis,
+      fileName: analysis?.fileName || '',
     };
     if (!activeSessionIdRef.current) {
       activeSessionIdRef.current = sessionId;
       setActiveSessionId(sessionId);
+      sessionStorage.setItem(ACTIVE_CHAT_SESSION_KEY, sessionId);
     }
     persistSessions(previous => [session, ...previous.filter(item => item.id !== sessionId)].slice(0, 40));
     return sessionId;
@@ -206,13 +302,18 @@ export default function Chat() {
   useEffect(() => {
     const startNewChat = () => {
       setMessages(current => {
-        upsertActiveSession(current);
+        upsertActiveSession(current, uploadedData);
         return [];
       });
       activeSessionIdRef.current = '';
       setActiveSessionId('');
-      localStorage.removeItem('byizon_active_chat_session');
+      sessionStorage.removeItem(ACTIVE_CHAT_SESSION_KEY);
       setInput('');
+      setSelectedUploadFile(null);
+      setUploadError('');
+      setUploadingFile(false);
+      setUploadedData(null);
+      setPipelineStages([]);
       setRightPanelMode('history');
       setHistoryMenu(null);
     };
@@ -230,32 +331,53 @@ export default function Chat() {
       setActiveSessionId('');
       setMessages([]);
       setInput('');
+      setSelectedUploadFile(null);
+      setUploadError('');
+      setUploadingFile(false);
+      setUploadedData(null);
+      setPipelineStages([]);
     }
-    localStorage.removeItem('byizon_active_chat_session');
+    sessionStorage.removeItem(ACTIVE_CHAT_SESSION_KEY);
     setHistoryMenu(null);
   };
 
   const handleSend = (e) => {
     e?.preventDefault();
-    if (!input.trim()) return;
+    const uploadedFileName = selectedUploadFile?.name || '';
+    const attachedFile = uploadedFileName ? {
+      name: uploadedFileName,
+      ...uploadFileMeta(uploadedFileName),
+    } : null;
+    if (!input.trim() && !attachedFile) return;
     
-    const userMsg = input.trim();
-    const newMessages = [...messages, { role: 'user', text: userMsg, time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }];
+    const typedText = input.trim();
+    const responsePrompt = typedText || (attachedFile ? `Analyze ${attachedFile.name}` : '');
+    const newMessages = [...messages, {
+      role: 'user',
+      text: typedText,
+      attachment: attachedFile,
+      time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+    }];
     setMessages(newMessages);
     upsertActiveSession(newMessages);
     setInput('');
+    setSelectedUploadFile(null);
+    setUploadError('');
 
     // Mock specific responses based on keywords
     setTimeout(() => {
       let aiResponse = { role: 'ai', time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) };
 
-      if (userMsg.toLowerCase().includes('slack')) {
+      if (attachedFile && !typedText) {
+        aiResponse.type = 'text';
+        aiResponse.text = `File mil gayi hai. Aap ${attachedFile.name} par analysis, rows/columns, data quality, ya dashboard ke baare me pooch sakte ho.`;
+      } else if (responsePrompt.toLowerCase().includes('slack')) {
         aiResponse.type = 'slack_summary';
         setRightPanelMode('history');
-      } else if (userMsg.toLowerCase().includes('schedule') || userMsg.toLowerCase().includes('meeting')) {
+      } else if (responsePrompt.toLowerCase().includes('schedule') || responsePrompt.toLowerCase().includes('meeting')) {
         aiResponse.type = 'meeting_scheduled';
         setRightPanelMode('meeting');
-      } else if (userMsg.toLowerCase().includes('sales') || userMsg.toLowerCase().includes('profit') || userMsg.toLowerCase().includes('sheet')) {
+      } else if (responsePrompt.toLowerCase().includes('sales') || responsePrompt.toLowerCase().includes('profit') || responsePrompt.toLowerCase().includes('sheet')) {
         aiResponse.type = 'sales_report';
         setRightPanelMode('data');
       } else {
@@ -275,7 +397,18 @@ export default function Chat() {
     if (msg.role === 'user') {
       return (
         <div key={i} className="pdf-chat-msg user">
-          <div className="pdf-chat-bubble">{msg.text}</div>
+          <div className="pdf-chat-bubble">
+            {msg.attachment && (
+              <div className={`chat-sent-attachment file-${msg.attachment.kind || 'file'}`}>
+                <FileSpreadsheet size={22} />
+                <div>
+                  <strong>{msg.attachment.name}</strong>
+                  <span>{msg.attachment.label || 'Uploaded file'}</span>
+                </div>
+              </div>
+            )}
+            {msg.text && <span>{msg.text}</span>}
+          </div>
           <div className="pdf-chat-avatar">{initials}</div>
         </div>
       );
@@ -461,38 +594,11 @@ export default function Chat() {
   };
 
   return (
-    <div className="app-layout pdf-chat-layout">
+    <div className={`app-layout pdf-chat-layout ${isRightPanelHidden ? 'right-panel-hidden' : ''}`}>
       <Sidebar />
       <main className="pdf-chat-main">
         <header className="pdf-chat-header">
           <button className="back-btn chat-hidden-control" onClick={() => navigate('/dashboard')}><ArrowLeft size={16}/> Back to Dashboard</button>
-          
-          <div className="header-middle">
-            <div className="bot-title">
-              <div className="bot-icon"><Bot size={24}/></div>
-              <div>
-                <h2>Byizon AI <span className="pro-badge">Pro</span></h2>
-                <p>Your AI business assistant</p>
-              </div>
-            </div>
-
-            <div className="header-filters">
-              <div className="workspace-selector chat-hidden-control">
-                <span className="dot celebso"></span> Workspace: <strong>Celebso Group</strong> <ChevronDown size={14}/>
-              </div>
-              <div className="connected-apps-row">
-                <span>Connected Apps:</span>
-                {connectedApps.length > 0 ? connectedApps.slice(0, 4).map(app => (
-                  <span className="app-icon" key={app.id} style={{ color: app.accent }}>
-                    <Database size={14} /> {app.name}
-                  </span>
-                )) : (
-                  <span className="more-apps">No connected apps</span>
-                )}
-                {connectedApps.length > 4 && <span className="more-apps">+ {connectedApps.length - 4} more</span>}
-              </div>
-            </div>
-          </div>
           
           <div className="header-right">
             <button className="btn-outline"><AlertCircle size={14}/> Need Help?</button>
@@ -507,7 +613,7 @@ export default function Chat() {
           </div>
         </header>
 
-        <div className="pdf-chat-body">
+        <div className={`pdf-chat-body ${messages.length === 0 ? 'is-empty' : 'has-messages'}`}>
           <div className="pdf-chat-messages">
             {messages.length === 0 && (
               <div className="empty-state">
@@ -523,41 +629,40 @@ export default function Chat() {
           <div className="pdf-chat-input-area">
             <div className="input-prompt-label">Ask anything about your business...</div>
             <form className="pdf-chat-input-box" onSubmit={handleSend}>
-              <div className="input-shortcuts">
-                <input
-                  ref={fileInputRef}
-                  className="chat-native-file-input"
-                  type="file"
-                  onChange={handleLocalFileSelect}
-                />
-                <button type="button" onClick={() => fileInputRef.current?.click()}><Paperclip size={14}/> Upload File</button>
-                {appShortcuts.map(shortcut => {
-                  const connected = isShortcutConnected(shortcut);
-                  const Icon = shortcut.icon;
-                  return (
-                    <button
-                      type="button"
-                      key={`${shortcut.connectorId}-${shortcut.capability || shortcut.label}`}
-                      className={connected ? 'shortcut-connected' : 'shortcut-connect'}
-                      onClick={() => handleShortcut(shortcut)}
-                      title={connected ? `${shortcut.label} connected` : `Connect ${shortcut.label}`}
-                    >
-                      {Icon ? <Icon size={14} color={shortcut.color} /> : <span style={{ color: shortcut.color, fontWeight: 800 }}>{shortcut.label[0]}</span>}
-                      {shortcut.label}
-                      {!connected && <small>Connect</small>}
-                    </button>
-                  );
-                })}
-              </div>
+              <input
+                ref={fileInputRef}
+                className="chat-native-file-input"
+                type="file"
+                onChange={handleLocalFileSelect}
+              />
+              {selectedUploadFile && (
+                <div className={`chat-upload-preview file-${selectedUploadMeta.kind} ${uploadingFile ? 'is-loading' : ''}`}>
+                  <FileSpreadsheet size={22} />
+                  <div>
+                    <strong>{selectedUploadFile.name}</strong>
+                    <span>{uploadError || (uploadingFile ? 'Uploading...' : selectedUploadMeta.label)}</span>
+                  </div>
+                </div>
+              )}
               
               <div className="input-field-row">
+                <button
+                  type="button"
+                  className="chat-plus-upload"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingFile}
+                  aria-label="Upload file"
+                  title="Upload file"
+                >
+                  <Plus size={22} />
+                </button>
                 <input 
                   value={input} 
                   onChange={(e) => setInput(e.target.value)} 
                   placeholder="Ask Byizon AI..."
                 />
                 <button type="button" className="mic-btn"><Mic size={18}/></button>
-                <button type="submit" className="send-btn" disabled={!input.trim()}><Send size={18}/></button>
+                <button type="submit" className="send-btn" disabled={!input.trim() && !selectedUploadFile}><Send size={18}/></button>
               </div>
             </form>
             <div className="input-disclaimer">Byizon AI can make mistakes. Please verify important information.</div>
@@ -565,7 +670,28 @@ export default function Chat() {
         </div>
       </main>
 
+      {isRightPanelHidden && (
+        <button
+          type="button"
+          className="right-panel-restore-handle"
+          onClick={() => setIsRightPanelHidden(false)}
+          aria-label="Show assistant panel"
+          title="Show assistant panel"
+        >
+          <ChevronLeft size={20} />
+        </button>
+      )}
+
       <aside className="pdf-chat-right-panel">
+        <button
+          type="button"
+          className="right-panel-collapse-button"
+          onClick={() => setIsRightPanelHidden(true)}
+          aria-label="Hide assistant panel"
+          title="Hide assistant panel"
+        >
+          <ChevronRight size={20} />
+        </button>
         {rightPanelMode === 'history' && (
           <>
             <div className="panel-section">
@@ -590,7 +716,13 @@ export default function Chat() {
                       setHistoryMenu(null);
                       activeSessionIdRef.current = item.id;
                       setActiveSessionId(item.id);
-                      setMessages(item.messages || []);
+                      sessionStorage.setItem(ACTIVE_CHAT_SESSION_KEY, item.id);
+                      setMessages(Array.isArray(item.messages) ? item.messages.map(normalizeChatMessage).filter(Boolean) : []);
+                      setUploadedData(item.analysis || null);
+                      setSelectedUploadFile(null);
+                      setUploadError('');
+                      setUploadingFile(false);
+                      setPipelineStages([]);
                       setRightPanelMode('history');
                     }}
                     onContextMenu={event => {

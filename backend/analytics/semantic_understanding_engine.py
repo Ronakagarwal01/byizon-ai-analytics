@@ -5,7 +5,7 @@ from typing import Any
 
 import pandas as pd
 
-from .data_profiler import clean_datetime, clean_numeric, is_empty_value
+from .data_profiler import clean_datetime, clean_numeric, empty_mask, inference_sample
 
 
 CURRENCY_SYMBOLS = {"₹": "₹", "$": "$", "€": "€", "£": "£", "¥": "¥"}
@@ -20,7 +20,8 @@ def _contains_any(text: str, tokens: list[str]) -> bool:
 
 
 def _sample(series: pd.Series, limit: int = 200) -> pd.Series:
-    values = series[~series.map(is_empty_value)].astype(str).str.strip()
+    sampled = inference_sample(series, max(limit * 2, limit))
+    values = sampled[~empty_mask(sampled)].astype(str).str.strip()
     return values.head(limit)
 
 
@@ -51,7 +52,7 @@ def _is_id_like(column_name: str, profile_col: dict[str, Any], series: pd.Series
     dtype = profile_col.get("detectedType")
     sample = _sample(series)
     sequential_numeric = False
-    nums = clean_numeric(series).dropna()
+    nums = clean_numeric(inference_sample(series, 1000)).dropna()
     if len(nums) >= 3:
         diffs = nums.sort_values().diff().dropna()
         sequential_numeric = bool((diffs == 1).mean() > 0.85)
@@ -78,7 +79,8 @@ def _is_id_like(column_name: str, profile_col: dict[str, Any], series: pd.Series
 def _semantic_for_column(column_name: str, profile_col: dict[str, Any], series: pd.Series) -> dict[str, Any]:
     clean = _clean_name(column_name)
     dtype = profile_col.get("detectedType")
-    non_empty = series[~series.map(is_empty_value)]
+    sampled = inference_sample(series, 1000)
+    non_empty = sampled[~empty_mask(sampled)]
     row_count = max(len(series), 1)
     unique_count = int(profile_col.get("uniqueCount") or 0)
     unique_rate = float(profile_col.get("uniqueRate") or 0)

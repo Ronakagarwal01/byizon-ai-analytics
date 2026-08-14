@@ -2,23 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from .data_profiler import clean_datetime, clean_numeric, is_empty_value
+from .data_profiler import detect_data_type
 
 
-def _basic_type(series) -> str:
-    non_empty = series[~series.map(is_empty_value)]
-    if non_empty.empty:
-        return "empty"
-    numeric_ratio = clean_numeric(non_empty).notna().mean()
-    if numeric_ratio >= 0.75:
-        return "numeric"
-    date_ratio = clean_datetime(non_empty).notna().mean()
-    if date_ratio >= 0.65:
-        return "date"
-    lowered = non_empty.astype(str).str.strip().str.lower()
-    if lowered.isin(["true", "false", "yes", "no", "1", "0"]).mean() >= 0.85:
-        return "boolean"
-    return "categorical"
+def _basic_type(series, column_name: str) -> str:
+    return detect_data_type(series, column_name)
 
 
 def detect_schema(parsed: dict[str, Any]) -> dict[str, Any]:
@@ -36,7 +24,7 @@ def detect_schema(parsed: dict[str, Any]) -> dict[str, Any]:
             "columns": [
                 {
                     "name": column,
-                    "detectedType": _basic_type(table.dataframe[column]),
+                    "detectedType": _basic_type(table.dataframe[column], str(column)),
                 }
                 for column in table.dataframe.columns
             ],

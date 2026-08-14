@@ -90,6 +90,7 @@ export default function Login() {
     localStorage.removeItem('byizon_pending_email');
     localStorage.removeItem('byizon_pending_user');
     localStorage.setItem('byizon_login_user', JSON.stringify(payload.user));
+    sessionStorage.removeItem('byizon_active_chat_session');
     setNotice({ type: 'success', text: payload.user?.onboarding?.completed ? 'Opening your workspace...' : 'Login successful. Resuming account setup...' });
     window.setTimeout(() => navigate(payload.nextStep || payload.user?.onboarding?.nextStep || '/dashboard'), 350);
   };

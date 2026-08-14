@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, CheckCircle2, Clock3, ExternalLink, Globe2, History, Loader2,
   LockKeyhole, Palette, RotateCcw, Send, Share2, ShieldCheck, Sparkles, Trash2, X,
@@ -54,6 +54,7 @@ function portableAnalysis(analysis) {
 
 export default function DashboardStudio() {
   const { reportId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { uploadedData } = useData();
   const { theme } = useTheme();
   const workspaceUser = useWorkspaceUser();
@@ -71,7 +72,9 @@ export default function DashboardStudio() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
   const [error, setError] = useState('');
+  const autoGenerateStarted = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -118,6 +121,7 @@ export default function DashboardStudio() {
   useEffect(() => {
     if (!datasetKey) return;
     let active = true;
+    setHistoryReady(false);
     setHistoryLoading(true);
     loadDashboardHistory(datasetKey)
       .then(versions => {
@@ -129,7 +133,11 @@ export default function DashboardStudio() {
         }
       })
       .catch(() => active && setHistory([]))
-      .finally(() => active && setHistoryLoading(false));
+      .finally(() => {
+        if (!active) return;
+        setHistoryLoading(false);
+        setHistoryReady(true);
+      });
     return () => { active = false; };
     // A dataset change should load its own saved versions only once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,7 +152,7 @@ export default function DashboardStudio() {
     return () => window.clearInterval(timer);
   }, [generating]);
 
-  const generateWithStitch = async (event) => {
+  const generateWithStitch = useCallback(async (event) => {
     event?.preventDefault();
     if (!prompt.trim() || generating || !analysis || !config?.stitchConfigured) return;
     setGenerating(true);
@@ -184,7 +192,15 @@ export default function DashboardStudio() {
     } finally {
       setGenerating(false);
     }
-  };
+  }, [analysis, config?.stitchConfigured, datasetKey, generating, plan, prompt, reportId, stitchResult]);
+
+  useEffect(() => {
+    if (searchParams.get('autogenerate') !== '1' || autoGenerateStarted.current) return;
+    if (!analysis || !config?.stitchConfigured || !historyReady || historyLoading || generating) return;
+    autoGenerateStarted.current = true;
+    setSearchParams({}, { replace: true });
+    if (!stitchResult) generateWithStitch();
+  }, [analysis, config?.stitchConfigured, generateWithStitch, generating, historyLoading, historyReady, searchParams, setSearchParams, stitchResult]);
 
   if (loading) return <main className="studio-state"><Loader2 className="spin" /><h1>Opening Customized Dashboard...</h1></main>;
   if (!analysis && !reportId) return <Navigate to="/" replace />;

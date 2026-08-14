@@ -95,7 +95,7 @@ function App() {
           <Route path="/terms"         element={<Terms />}        />
           <Route path="/upload"        element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
           <Route path="/dashboard"     element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/dashboard/:dashboardId" element={<ProtectedRoute><DynamicDashboardPage /></ProtectedRoute>} />
+          <Route path="/dashboard/:dashboardId" element={<DynamicDashboardPage />} />
           <Route path="/chat"          element={<ProtectedRoute><Chat /></ProtectedRoute>} />
           <Route path="/voice"         element={<ProtectedRoute><VoiceAssistantPage /></ProtectedRoute>} />
           <Route path="/analytics"     element={<ProtectedRoute><AnalyticsBriefPage /></ProtectedRoute>} />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Bell, Check, CircleHelp, Copy, Database, ExternalLink, Globe2, Loader2, Menu, Moon, Paintbrush, Plus, Sparkles, Sun, X } from 'lucide-react';
 import { createJsonDashboard, getAuthSession, getConnectors, oauthStartUrl } from '../api/universalBackend';
 import { useData } from '../context/DataContext';
@@ -11,6 +11,7 @@ const GUEST_ACCOUNT = { ...GUEST_WORKSPACE_USER, email: '' };
 
 export default function WorkspaceTopbar() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { uploadedData } = useData();
   const { isDark, toggleTheme } = useTheme();
   const [account, setAccount] = useState(GUEST_ACCOUNT);
@@ -92,14 +93,16 @@ export default function WorkspaceTopbar() {
   return (
     <>
       <header className="workspace-topbar" aria-label="Workspace actions">
-        <button
-          className="workspace-menu-button"
-          type="button"
-          onClick={() => window.dispatchEvent(new Event('byizon:open-navigation'))}
-          aria-label="Open navigation"
-        >
-          <Menu size={17} />
-        </button>
+        {location.pathname !== '/chat' && (
+          <button
+            className="workspace-menu-button"
+            type="button"
+            onClick={() => window.dispatchEvent(new Event('byizon:open-navigation'))}
+            aria-label="Open navigation"
+          >
+            <Menu size={17} />
+          </button>
+        )}
 
         <div className="workspace-topbar-actions">
           <button className="topbar-help-button" type="button">
