@@ -1,4 +1,4 @@
-import { Component, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMemo } from 'react';
 import { Eye, EyeOff, Loader2, LockKeyhole, ShieldCheck, Search, TrendingUp, Lightbulb, FileText, ClipboardList } from 'lucide-react';
@@ -12,34 +12,8 @@ import { enhanceStitchHtml } from '../utils/stitchPreview';
 const CHART_COLOR = '#3f6f8f';
 const COLORS = ['#3f6f8f', '#6f8f7a', '#b68a56', '#7b718f', '#8b6f65', '#56828f', '#8d965f', '#69778c'];
 
-class SharedDashboardErrorBoundary extends Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error) {
-    console.error('Shared dashboard render failed', error);
-  }
-
-  render() {
-    if (!this.state.hasError) return this.props.children;
-    return (
-      <main className="custom-share-gate-page">
-        <header><Link to="/" className="byizon-logo"><span>Byi</span><b>zon</b></Link><span><ShieldCheck size={14} /> Protected dashboard</span></header>
-        <section className="protected-share-gate">
-          <div className="protected-share-icon"><LockKeyhole size={26} /></div>
-          <span className="section-kicker">Secure dashboard</span>
-          <h1>Dashboard could not load</h1>
-          <p>Please refresh this link. If it still does not open, ask the owner to generate a fresh secure dashboard link.</p>
-        </section>
-      </main>
-    );
-  }
+function errorMessage(error, fallback) {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function parseDashboardPlan(customization) {
@@ -141,7 +115,7 @@ function NativeSharedDashboard({ analysis, plan }) {
   );
 }
 
-function SharedCustomDashboardPage() {
+export default function SharedCustomDashboard() {
   const { reportId } = useParams();
   const [metadata, setMetadata] = useState(null);
   const [analysis, setAnalysis] = useState(null);
@@ -164,7 +138,7 @@ function SharedCustomDashboardPage() {
         setMetadata(value);
         setError('');
       })
-      .catch(err => active && setError(err.message))
+      .catch(err => active && setError(errorMessage(err, 'Protected dashboard could not be verified. You can still try the shared password.')))
       .finally(() => {
         if (!active) return;
         window.clearTimeout(timeout);
@@ -185,7 +159,7 @@ function SharedCustomDashboardPage() {
       setAnalysis(await unlockProtectedShare(reportId, password));
       setPassword('');
     } catch (err) {
-      setError(err.message);
+      setError(errorMessage(err, 'Protected report could not be unlocked.'));
     } finally {
       setUnlocking(false);
     }
@@ -200,7 +174,7 @@ function SharedCustomDashboardPage() {
           <span className="section-kicker">Password-protected live dashboard</span>
           <h1>{loading ? 'Checking secure link...' : metadata?.fileName || 'Customized dashboard'}</h1>
           <p>Enter the password shared by the dashboard owner. Five incorrect attempts lock this link.</p>
-          {!loading && metadata ? (
+          {!loading ? (
             <form onSubmit={unlock}>
               <label>
                 <span>Dashboard password</span>
@@ -212,7 +186,7 @@ function SharedCustomDashboardPage() {
               {error && <div className="secure-dialog-error" role="alert">{error}</div>}
               <button className="secure-dialog-submit" type="submit" disabled={!password || unlocking}>{unlocking ? <Loader2 size={17} className="spin" /> : <ShieldCheck size={17} />}{unlocking ? 'Unlocking...' : 'Unlock dashboard'}</button>
             </form>
-          ) : !loading && <div className="secure-dialog-error">{error || 'This secure dashboard is unavailable.'}</div>}
+          ) : null}
         </section>
       </main>
     );
@@ -239,13 +213,5 @@ function SharedCustomDashboardPage() {
         <section className="stitch-empty-stage"><LockKeyhole /><h1>Customized dashboard output is unavailable</h1><p>Ask the owner to generate and share the Stitch dashboard again.</p></section>
       )}
     </main>
-  );
-}
-
-export default function SharedCustomDashboard() {
-  return (
-    <SharedDashboardErrorBoundary>
-      <SharedCustomDashboardPage />
-    </SharedDashboardErrorBoundary>
   );
 }
