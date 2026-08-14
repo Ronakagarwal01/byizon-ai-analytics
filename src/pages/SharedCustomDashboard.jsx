@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMemo } from 'react';
 import { Eye, EyeOff, Loader2, LockKeyhole, ShieldCheck, Search, TrendingUp, Lightbulb, FileText, ClipboardList } from 'lucide-react';
@@ -11,6 +11,36 @@ import { enhanceStitchHtml } from '../utils/stitchPreview';
 
 const CHART_COLOR = '#3f6f8f';
 const COLORS = ['#3f6f8f', '#6f8f7a', '#b68a56', '#7b718f', '#8b6f65', '#56828f', '#8d965f', '#69778c'];
+
+class SharedDashboardErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    console.error('Shared dashboard render failed', error);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <main className="custom-share-gate-page">
+        <header><Link to="/" className="byizon-logo"><span>Byi</span><b>zon</b></Link><span><ShieldCheck size={14} /> Protected dashboard</span></header>
+        <section className="protected-share-gate">
+          <div className="protected-share-icon"><LockKeyhole size={26} /></div>
+          <span className="section-kicker">Secure dashboard</span>
+          <h1>Dashboard could not load</h1>
+          <p>Please refresh this link. If it still does not open, ask the owner to generate a fresh secure dashboard link.</p>
+        </section>
+      </main>
+    );
+  }
+}
 
 function parseDashboardPlan(customization) {
   const source = String(customization?.html || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -111,7 +141,7 @@ function NativeSharedDashboard({ analysis, plan }) {
   );
 }
 
-export default function SharedCustomDashboard() {
+function SharedCustomDashboardPage() {
   const { reportId } = useParams();
   const [metadata, setMetadata] = useState(null);
   const [analysis, setAnalysis] = useState(null);
@@ -123,11 +153,27 @@ export default function SharedCustomDashboard() {
 
   useEffect(() => {
     let active = true;
+    const timeout = window.setTimeout(() => {
+      if (!active) return;
+      setLoading(false);
+      setError('Secure dashboard is taking too long to respond. Please refresh this link or generate a new one.');
+    }, 12000);
     getProtectedShareMetadata(reportId)
-      .then(value => active && setMetadata(value))
+      .then(value => {
+        if (!active) return;
+        setMetadata(value);
+        setError('');
+      })
       .catch(err => active && setError(err.message))
-      .finally(() => active && setLoading(false));
-    return () => { active = false; };
+      .finally(() => {
+        if (!active) return;
+        window.clearTimeout(timeout);
+        setLoading(false);
+      });
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
   }, [reportId]);
 
   const unlock = async (event) => {
@@ -193,5 +239,13 @@ export default function SharedCustomDashboard() {
         <section className="stitch-empty-stage"><LockKeyhole /><h1>Customized dashboard output is unavailable</h1><p>Ask the owner to generate and share the Stitch dashboard again.</p></section>
       )}
     </main>
+  );
+}
+
+export default function SharedCustomDashboard() {
+  return (
+    <SharedDashboardErrorBoundary>
+      <SharedCustomDashboardPage />
+    </SharedDashboardErrorBoundary>
   );
 }
