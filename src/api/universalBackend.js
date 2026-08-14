@@ -539,6 +539,17 @@ export async function getAutoWebsiteStatus(sessionId) {
   return payload.website;
 }
 
+export async function regenerateAutoWebsite(sessionId) {
+  const response = await apiFetch(`${apiBase()}/api/auto-website/${encodeURIComponent(sessionId)}/regenerate`, {
+    method: 'POST',
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || 'New website link could not be generated.');
+  }
+  return payload.website;
+}
+
 export async function unlockJsonDashboard(dashboardId, password) {
   const response = await apiFetch(`${apiBase()}/api/dashboards/${encodeURIComponent(dashboardId)}/access`, {
     method: 'POST',

@@ -1453,6 +1453,35 @@ async def app(scope, receive, send):
             await _send_json(send, 200, {"ok": True, "website": website})
             return
 
+        if method == "POST" and path.startswith("/api/auto-website/") and path.endswith("/regenerate"):
+            session_id = path.strip("/").split("/")[-2]
+            session = get_session(session_id, workspace_user_id)
+            if not session:
+                await _send_json(send, 404, {"ok": False, "error": "Analysis session not found."})
+                return
+            analysis = dict(session.get("analysis") or {})
+            if not analysis:
+                await _send_json(send, 400, {"ok": False, "error": "Dashboard analysis is not ready yet."})
+                return
+            _AUTO_WEBSITE_PASSWORDS.pop(session_id, None)
+            analysis.pop("autoWebsite", None)
+            analysis.pop("studioCustomization", None)
+            analysis["autoWebsite"] = {"status": "generating", "stage": "stitch_generation"}
+            update_analysis(
+                session_id,
+                analysis,
+                workspace_user_id,
+                analysis_status=str(session.get("analysisStatus") or "complete"),
+            )
+            _WEBSITE_EXECUTOR.submit(
+                _generate_auto_stitch_website,
+                session_id,
+                {key: value for key, value in analysis.items() if key not in {"autoWebsite", "studioCustomization"}},
+                workspace_user_id,
+            )
+            await _send_json(send, 200, {"ok": True, "website": analysis["autoWebsite"]})
+            return
+
         if method == "GET" and path.startswith("/api/analytics-dataset/"):
             analytics_id = path.rsplit("/", 1)[-1]
             query = _query_params(scope)

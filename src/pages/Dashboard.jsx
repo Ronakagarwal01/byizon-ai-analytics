@@ -5,7 +5,7 @@ import SecureExportDialog from '../components/SecureExportDialog';
 import { useData } from '../context/DataContext';
 import { recomputeFilteredKPIs } from '../api/analyticsEngine';
 import { askDataChat } from '../api/huggingface';
-import { getAutoWebsiteStatus, refreshConnectedSource } from '../api/universalBackend';
+import { getAutoWebsiteStatus, regenerateAutoWebsite, refreshConnectedSource } from '../api/universalBackend';
 import { useChartTheme } from '../utils/chartTheme';
 import * as XLSX from 'xlsx';
 import {
@@ -379,6 +379,7 @@ export default function Dashboard() {
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [secureDialogMode, setSecureDialogMode] = useState(null);
   const [autoWebsite, setAutoWebsite] = useState(uploadedData?.autoWebsite || { status: 'queued' });
+  const [websiteRefreshNonce, setWebsiteRefreshNonce] = useState(0);
   const [copiedWebsiteField, setCopiedWebsiteField] = useState('');
   const rowsPerPage = 10;
   const analyticsDataset = uploadedData?.analyticsDataset || null;
@@ -432,13 +433,30 @@ export default function Dashboard() {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [uploadedData?.sessionId]);
+  }, [uploadedData?.sessionId, websiteRefreshNonce]);
 
   const copyWebsiteValue = async (field, value) => {
     if (!value) return;
     await navigator.clipboard.writeText(value);
     setCopiedWebsiteField(field);
     window.setTimeout(() => setCopiedWebsiteField(current => current === field ? '' : current), 1800);
+  };
+
+  const generateFreshWebsiteLink = async () => {
+    const sessionId = uploadedData?.sessionId;
+    if (!sessionId || autoWebsite.status === 'generating') return;
+    const passwordKey = `byizon:auto-website-password:${sessionId}`;
+    sessionStorage.removeItem(passwordKey);
+    setCopiedWebsiteField('');
+    setAutoWebsite({ status: 'generating', stage: 'stitch_generation' });
+    try {
+      const website = await regenerateAutoWebsite(sessionId);
+      if (website.password) sessionStorage.setItem(passwordKey, website.password);
+      setAutoWebsite(website);
+      setWebsiteRefreshNonce(value => value + 1);
+    } catch (error) {
+      setAutoWebsite({ status: 'error', error: error instanceof Error ? error.message : 'New website link could not be generated.' });
+    }
   };
 
   // Hook Ctrl+Shift+D for Developer Debug mode toggle
@@ -874,6 +892,9 @@ export default function Dashboard() {
                     {copiedWebsiteField === 'password' ? <><CheckCircle2 size={15} /> Copied</> : <><Copy size={15} /> Copy</>}
                   </button>
                 </div>
+                <button className="dashboard-new-link-button" onClick={generateFreshWebsiteLink} type="button">
+                  <RefreshCw size={15} /> New link
+                </button>
               </div>
             ) : (
               <div className="dashboard-publish-building"><Loader2 className="spin" size={16} /> {autoWebsite.status === 'error' ? autoWebsite.error : 'Website link and password are being prepared automatically.'}</div>

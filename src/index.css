@@ -18480,7 +18480,7 @@ html body #root .dashboard-publish-actions .dashboard-live-button {
 html body #root .dashboard-publish-credentials {
   width: 100% !important;
   display: grid !important;
-  grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.8fr) !important;
+  grid-template-columns: minmax(0, 1.55fr) minmax(270px, 0.75fr) auto !important;
   gap: 10px !important;
 }
 
@@ -18535,6 +18535,22 @@ html body #root .dashboard-credential-field > button {
 }
 
 html body #root .dashboard-credential-field > button:disabled { cursor: not-allowed !important; opacity: 0.5 !important; }
+html body #root .dashboard-new-link-button {
+  min-height: 46px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  padding: 0 15px !important;
+  color: #fff !important;
+  background: #a85b35 !important;
+  border: 1px solid #9a552f !important;
+  border-radius: 7px !important;
+  font-size: 12px !important;
+  font-weight: 850 !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
 html body #root .dashboard-publish-building { width: 100%; display: flex; align-items: center; justify-content: center; gap: 9px; color: #6b7280; font-size: 12px; }
 
 html body #root .dashboard-export-control .export-menu {
