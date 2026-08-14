@@ -77,9 +77,6 @@ export default function Connections() {
       const payload = await getConnectors();
       setCatalog(payload.catalog || FALLBACK_CONNECTORS);
       setConnections(payload.connections || []);
-      if (payload.legacyConnectionsRequireReconnect && suppressLegacyNotice !== true) {
-        setNotice('A connection created before user isolation is hidden for security. Reconnect that provider once to bind it to this workspace.');
-      }
     } catch (err) {
       setError(`${err.message} Start the analytics backend to manage live connections.`);
     } finally {

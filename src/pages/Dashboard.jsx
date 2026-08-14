@@ -1714,7 +1714,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        <DashboardChatWidget data={uploadedData} />
         <SecureExportDialog
           open={Boolean(secureDialogMode)}
           mode={secureDialogMode}

@@ -565,9 +565,28 @@ def _generate_auto_stitch_website(
 
         result = plan_dashboard(prompt, quick_analysis, use_stitch=True)
         stitch = result.get("stitch") or {}
-        if stitch.get("status") != "generated":
-            raise RuntimeError(stitch.get("error") or "Stitch website generation is unavailable.")
-        customized = {**stitch, "prompt": prompt, "plan": result.get("plan")}
+        plan = result.get("plan") or {}
+        if stitch.get("status") == "generated":
+            customized = {**stitch, "prompt": prompt, "plan": plan}
+        else:
+            native_spec = {
+                "title": plan.get("title") or f"{quick_analysis.get('fileName', 'Business')} Dashboard",
+                "theme": plan.get("theme") or "light",
+                "layout": plan.get("layout") or "grid",
+                "kpis": quick_analysis.get("kpis", [])[:8],
+                "charts": quick_analysis.get("charts", [])[:8],
+                "insights": (quick_analysis.get("insights") or quick_analysis.get("insightObjects") or [])[:8],
+                "summary": quick_analysis.get("summary") or "Interactive dashboard generated from this protected analysis.",
+            }
+            customized = {
+                "configured": stitch.get("configured", False),
+                "status": "generated",
+                "provider": "native-dashboard",
+                "fallbackReason": stitch.get("error") or stitch.get("status") or "Stitch bridge unavailable",
+                "html": json.dumps(native_spec, ensure_ascii=False),
+                "prompt": prompt,
+                "plan": plan,
+            }
         protected_analysis = {**quick_analysis, "studioCustomization": customized}
         share = create_protected_share(
             session_id,
