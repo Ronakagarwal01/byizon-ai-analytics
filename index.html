@@ -13,10 +13,24 @@
         margin: 0;
         padding: 0;
       }
+      .app-load-fallback {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        color: #172033;
+        font: 600 16px/1.4 system-ui, sans-serif;
+      }
+      .app-load-fallback span {
+        padding: 14px 18px;
+        border: 1px solid #eadfd6;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 8px 30px rgba(57, 43, 32, .08);
+      }
     </style>
   </head>
   <body style="background:#fffaf5;">
-    <div id="root"></div>
+    <div id="root"><div class="app-load-fallback"><span>Loading Byizon workspace...</span></div></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
